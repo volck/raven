@@ -1,0 +1,7 @@
+#!/bin/bash
+
+# Ensure that required subdirs exsist in $LOCAL_PATH
+mkdir -p ${CLONE_PATH}
+
+# Execute sealed secret generator
+/raven -se=${SECRET_ENGINE} -cert=${CERT_FILE} -token=${VAULT_TOKEN} -clonepath=${CLONE_PATH} -dest=${DEST_ENV} -repourl=${REPO_URL}
