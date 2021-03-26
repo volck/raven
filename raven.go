@@ -18,13 +18,13 @@ import (
 	"net"
 	//"gopkg.in/src-d/go-billy.v4/memfs"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	log "github.com/sirupsen/logrus"
 	yaml "gopkg.in/yaml.v2"
 	"io/ioutil"
 	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	serializer "k8s.io/apimachinery/pkg/runtime/serializer"
 	k8sJson "k8s.io/apimachinery/pkg/runtime/serializer/json"
-	"log"
 	"math/rand"
 	"net/http"
 	"os"
@@ -36,61 +36,6 @@ import (
 	"sync"
 	"time"
 )
-
-type kvstore struct {
-	RequestID     string `json:"request_id"`
-	LeaseID       string `json:"lease_id"`
-	Renewable     bool   `json:"renewable"`
-	LeaseDuration int    `json:"lease_duration"`
-	Data          struct {
-		Keys []string `json:"keys"`
-	} `json:"data"`
-	WrapInfo interface{} `json:"wrap_info"`
-	Warnings interface{} `json:"warnings"`
-	Auth     interface{} `json:"auth"`
-}
-
-type tokenValid struct {
-	RequestID     string `json:"request_id"`
-	LeaseID       string `json:"lease_id"`
-	Renewable     bool   `json:"renewable"`
-	LeaseDuration int    `json:"lease_duration"`
-	Data          struct {
-		Accessor       string      `json:"accessor"`
-		CreationTime   int         `json:"creation_time"`
-		CreationTTL    int         `json:"creation_ttl"`
-		DisplayName    string      `json:"display_name"`
-		EntityID       string      `json:"entity_id"`
-		ExpireTime     interface{} `json:"expire_time"`
-		ExplicitMaxTTL int         `json:"explicit_max_ttl"`
-		ID             string      `json:"id"`
-		Meta           interface{} `json:"meta"`
-		NumUses        int         `json:"num_uses"`
-		Orphan         bool        `json:"orphan"`
-		Path           string      `json:"path"`
-		Policies       []string    `json:"policies"`
-		TTL            int         `json:"ttl"`
-		Type           string      `json:"type"`
-	} `json:"data"`
-	WrapInfo interface{} `json:"wrap_info"`
-	Warnings interface{} `json:"warnings"`
-	Auth     interface{} `json:"auth"`
-	Errors   []string    `json:"errors"`
-}
-
-type singleKV struct {
-	RequestID     string `json:"request_id"`
-	LeaseID       string `json:"lease_id"`
-	Renewable     bool   `json:"renewable"`
-	LeaseDuration int    `json:"lease_duration"`
-	Data          struct {
-		Data     map[string]interface{} `json:"data"`
-		Metadata map[string]interface{} `json:"metadata"`
-	} `json:"data"`
-	WrapInfo interface{} `json:"wrap_info"`
-	Warnings interface{} `json:"warnings"`
-	Auth     interface{} `json:"auth"`
-}
 
 type config struct {
 	vaultEndpoint string
@@ -138,19 +83,21 @@ PickRipeSecrets() uses Alive() to check if we have dead secrets
 
 */
 
-func PickRipeSecrets(PreviousKV kvstore, NewKV kvstore) (RipeSecrets []string) {
+func PickRipeSecrets(PreviousKV *api.Secret, NewKV *api.Secret) (RipeSecrets []string) {
+	fmt.Printf("[*] PickRipeSecrets: PreviousKEYS: %v \n NewKEYS: %v [*] \n", PreviousKV.Data["keys"], NewKV.Data["keys"])
 
-	fmt.Printf("[*] PickRipeSecrets: Previous: %v \n New: %v [*] \n", PreviousKV.Data.Keys, NewKV.Data.Keys)
-	if len(PreviousKV.Data.Keys) == 0 || len(NewKV.Data.Keys) == 0 {
+	if PreviousKV.Data["keys"] == nil || NewKV.Data["keys"] == nil {
 		// we assume this is our first run so we do not know difference yet.
-	} else if reflect.DeepEqual(PreviousKV.Data.Keys, NewKV.Data.Keys) {
+		fmt.Println("PickRipeSecrets: we do nothing.")
+
+	} else if reflect.DeepEqual(PreviousKV.Data["keys"], NewKV.Data["keys"]) {
 		fmt.Println("PickRipeSecrets: Lists match.")
 	} else {
-		for secret := range PreviousKV.Data.Keys {
-			isAlive := Alive(NewKV.Data.Keys, PreviousKV.Data.Keys[secret])
+		for i, _ := range PreviousKV.Data["keys"].([]string) {
+			isAlive := Alive(NewKV.Data["keys"].([]string), PreviousKV.Data["keys"].([]string)[i])
 			if !isAlive {
-				fmt.Printf("[*] gosh darn it,  %s is ripe for pickin' [*] ", PreviousKV.Data.Keys[secret])
-				RipeSecrets = append(RipeSecrets, PreviousKV.Data.Keys[secret])
+				fmt.Printf("[*] gosh darn it,  %s is ripe for pickin' [*] ", PreviousKV.Data["keys"].([]string)[i])
+				RipeSecrets = append(RipeSecrets, PreviousKV.Data["keys"].([]string)[i])
 			}
 		}
 	}
@@ -203,8 +150,6 @@ func HarvestRipeSecrets(RipeSecrets []string, clonePath string, destEnv string) 
 func setSSHConfig() (auth transport.AuthMethod) {
 
 	sshKey, err := ioutil.ReadFile("/secret/sshKey")
-
-
 
 	if err != nil {
 		log.Fatalf("unable to read private key: %v", err)
@@ -330,78 +275,47 @@ func gitPush(LocalPath string, env string, url string) {
 /*
 getallKvs parameters:
 enviroment(i.e qa??, dev??)
-
-returns struct kvstore
-
 */
 
-func getAllKVs(vaultEndPoint string, env string, token string) (kv kvstore) {
-	url := vaultEndPoint + "/v1/" + env + "/metadata"
-	client := &http.Client{}
-	req, err := http.NewRequest("LIST", url, nil)
+func getAllKVs(env string, token string) (Secret *api.Secret, err error) {
+
+	client, err := client()
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println("getALLKVs client() failed:", err)
 	}
-	req.Header.Set("X-Vault-Token", token)
-	resp, err := client.Do(req)
+	url := env + "/metadata"
+
+	Secret, err = client.Logical().List(url)
+	fmt.Println("This is getAllKVs: reflect of Secret is:", reflect.TypeOf(Secret))
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println("getallKVs client.Logical().List(url) err", err)
 	}
-	bodyText, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatal(err)
-	}
-	err = json.Unmarshal([]byte(bodyText), &kv)
-	if err != nil {
-		fmt.Println("error-> ", err)
-	} else {
-		return
-	}
-	return
+	return Secret, err
 }
 
 /*
 getsingleKV() used to iterate struct from getAllKVs(), takes secretname as input, returns struct for single secret. Requires uniform data.
 */
 
-func getSingleKV(vaultEndPoint string, env string, secretname string, token string) (kv singleKV) {
-	url := vaultEndPoint + "/v1/" + env + "/data/" + secretname
+func getSingleKV(env string, secretname string) (Secret *api.Secret) {
+	//url := vaultEndPoint + "/v1/" + env + "/data/" + secretname
+	client, err := client()
+	if err != nil {
+		fmt.Println("getsingleKV client err:", err)
+	}
+	path := fmt.Sprintf("%s/data/%s", env, secretname)
 
-	client := &http.Client{}
-	req, err := http.NewRequest("GET", url, nil)
+	Secret, err = client.Logical().Read(path)
 	if err != nil {
-		log.Fatal(err)
-	}
-	req.Header.Set("X-Vault-Token", token)
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Fatal(err)
-	}
-	bodyText, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatal(err)
-	}
-	err = json.Unmarshal([]byte(bodyText), &kv)
-	if err != nil {
-		fmt.Println("error-> ", err)
-	} else {
-		return
+		fmt.Println("client.logical.read error:", err)
 	}
 	return
 
 }
 func RenewSelfToken(token string, vaultEndpoint string) {
-	config := &api.Config{
-		Address:    vaultEndpoint,
-		HttpClient: http.DefaultClient,
-	}
-	client, err := api.NewClient(config)
+	client, err := client()
 	if err != nil {
-		fmt.Println(err)
-	}
-	client.SetToken(token)
-	if err != nil {
-		fmt.Println(err)
+		fmt.Println("RenewSelfToken client init err:", err)
 	}
 	clientToken, err := client.Auth().Token().RenewSelf(300) // renew for 5 more minutes.
 	fmt.Println(clientToken)
@@ -417,40 +331,20 @@ returns false if tokens has errors or is invalid.
 
 func validateSelftoken(vaultEndPoint string, token string) (valid bool) {
 
-	url := vaultEndPoint + "/v1/auth/token/lookup-self"
+	client, err := client()
+	if err != nil {
+		fmt.Println("client.ValidateSelfToken() failed: %s \n ", err)
+	}
 
-	client := &http.Client{}
-	req, err := http.NewRequest("GET", url, nil)
+	_, err = client.Auth().Token().LookupSelf()
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println("validateSelftoken: Auth.LookupSelf()  failed: ", err)
+		valid = false
+		return valid
 	}
-	req.Header.Set("X-Vault-Token", token)
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Fatal(err)
-	}
-	bodyText, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatal(err)
-	}
-	var tokenreturn tokenValid
-	err = json.Unmarshal([]byte(bodyText), &tokenreturn)
-	if err != nil {
-		fmt.Println("error-> ", err)
-	} else {
-		if len(tokenreturn.Errors) == 0 {
-			fmt.Printf("[*] Token is valid. TTL: %v  [*] \n", tokenreturn.Data.TTL)
-			valid = true
-			if tokenreturn.Data.TTL < 100 {
-				RenewSelfToken(token, vaultEndPoint)
-			}
-			return
-		} else {
-			valid = false
-			return
-		}
-	}
-	return
+	valid = true
+	return valid
+
 }
 
 /*
@@ -462,9 +356,9 @@ createK8sSecret generates k8s secrets based on inputs:
 returns v1.Secret for consumption by SealedSecret
 */
 
-func createK8sSecret(name string, Namespace string, sourceenv string, dataFields singleKV) (secret v1.Secret) {
+func createK8sSecret(name string, Namespace string, sourceenv string, dataFields *api.Secret) (secret v1.Secret) {
 	Annotations := make(map[string]string)
-	for k, v := range dataFields.Data.Metadata {
+	for k, v := range dataFields.Data["metadata"].(map[string]interface{}) {
 		switch v.(type) {
 		case float64:
 			float64value := reflect.ValueOf(v)
@@ -486,20 +380,37 @@ func createK8sSecret(name string, Namespace string, sourceenv string, dataFields
 		return err == nil
 	}
 	Annotations["source"] = sourceenv
-	for k, v := range dataFields.Data.Data {
-		// we handle descriptions for KVs here, in order to show which secrets are handled by which SSG.
+
+	for k, v := range dataFields.Data["data"].(map[string]interface{}) {
+		fmt.Printf("datafields[data]: %s:%s \n ", k, v)
+		if strings.HasPrefix(v.(string), "base64:") {
+			stringSplit := strings.Split(v.(string), ":")
+			if isbase64(stringSplit[1]) {
+				data[k], _ = base64.StdEncoding.DecodeString(stringSplit[1])
+			}
+		}
 		if k == "raven/description" {
 			Annotations[k] = v.(string)
 		} else {
-			if strings.HasPrefix(v.(string), "base64:") {
-				stringSplit := strings.Split(v.(string), ":")
-				if isbase64(stringSplit[1]) {
-					data[k], _ = base64.StdEncoding.DecodeString(stringSplit[1])
-				}
-			} else {
-				stringdata[k] = v.(string)
-			}
+			stringdata[k] = v.(string)
 		}
+
+	}
+	for k, v := range dataFields.Data["metadata"].(map[string]interface{}) {
+		// we handle descriptions for KVs here, in order to show which secrets are handled by which SSG.
+		switch v.(type) {
+		case float64:
+			float64value := reflect.ValueOf(v)
+			float64convert := strconv.FormatFloat(float64value.Float(), 'f', -1, 64)
+			Annotations[k] = float64convert
+		case string:
+			Annotations[k] = v.(string)
+		case bool:
+			booleanvalue := reflect.ValueOf(v)
+			boolconvert := strconv.FormatBool(booleanvalue.Bool())
+			Annotations[k] = boolconvert
+		}
+
 	}
 
 	secret = v1.Secret{
@@ -562,13 +473,15 @@ func SerializeAndWriteToFile(SealedSecret *sealedSecretPkg.SealedSecret, fullPat
 	}
 }
 
-func readSealedSecretAndCompareWithVaultStruct(secret string, kv singleKV, filepointer string, secretEngine string) (NeedUpdate bool) {
-	/*
-		readSealedSecretAndCompareWithVaultStruct takes a vault KV as parameter as well as a filepointer pointing to a local yaml file.
+/*
+	readSealedSecretAndCompareWithVaultStruct takes a vault KV as parameter as well as a filepointer pointing to a local yaml file.
 
-	*/
+*/
+
+func readSealedSecretAndCompareWithVaultStruct(secret string, kv *api.Secret, filepointer string, secretEngine string) (NeedUpdate bool) {
+
 	NeedUpdate = false
-	VaultTimeStamp := kv.Data.Metadata["created_time"]
+	VaultTimeStamp := kv.Data["metadata"].(map[string]interface{})["created_time"]
 
 	//grab SealedSecret file
 	data, err := ioutil.ReadFile(filepointer)
@@ -606,10 +519,11 @@ getKVAndCreateSealedSecret combines several "maker-methods":
 * return KV object in order to compare later.
 
 */
-func getKVAndCreateSealedSecret(vaultEndpoint string, secretEngine string, secretName string, token string, destEnv string, pemFile string) (SealedSecret *sealedSecretPkg.SealedSecret, SingleKVFromVault singleKV) {
-	SingleKVFromVault = getSingleKV(vaultEndpoint, secretEngine, secretName, token)
+func getKVAndCreateSealedSecret(secretEngine string, secretName string, token string, destEnv string, pemFile string) (SealedSecret *sealedSecretPkg.SealedSecret, SingleKVFromVault *api.Secret) {
+	SingleKVFromVault = getSingleKV(secretEngine, secretName)
 	k8sSecret := createK8sSecret(secretName, destEnv, secretEngine, SingleKVFromVault)
 	SealedSecret = createSealedSecret(pemFile, &k8sSecret)
+
 	return
 }
 
@@ -635,6 +549,26 @@ var newConfig = config{
 	destEnv:       "",
 	pemFile:       "",
 	clonePath:     ""}
+
+/*
+We need to init the client a lot so this is a helper function which returns a fresh client.
+*/
+
+func client() (*api.Client, error) {
+	config := &api.Config{
+		Address:    newConfig.vaultEndpoint,
+		HttpClient: http.DefaultClient,
+	}
+	client, err := api.NewClient(config)
+	if err != nil {
+		fmt.Println("client api.newclient err:", err)
+	}
+	client.SetToken(newConfig.token)
+	if err != nil {
+		fmt.Println("client().SetToken() err:", err)
+	}
+	return client, err
+}
 
 func genericPostWebHook() {
 	webHookUrl, iSset := os.LookupEnv("webhook_url")
@@ -663,9 +597,12 @@ func genericPostWebHook() {
 }
 
 func forceRefresh(wg *sync.WaitGroup) {
-	var list = getAllKVs(newConfig.vaultEndpoint, newConfig.secretEngine, newConfig.token)
-	for _, secret := range list.Data.Keys {
-		SealedSecret, _ := getKVAndCreateSealedSecret(newConfig.vaultEndpoint, newConfig.secretEngine, secret, newConfig.token, newConfig.destEnv, newConfig.pemFile)
+	var list, err = getAllKVs(newConfig.secretEngine, newConfig.token)
+	if err != nil {
+		fmt.Println("forceRefresh: getAllKVs err:", err)
+	}
+	for _, secret := range list.Data["Keys"].([]string) {
+		SealedSecret, _ := getKVAndCreateSealedSecret(newConfig.secretEngine, secret, newConfig.token, newConfig.destEnv, newConfig.pemFile)
 		newBase := ensurePathandreturnWritePath(newConfig.clonePath, newConfig.destEnv, secret)
 		SerializeAndWriteToFile(SealedSecret, newBase)
 		fmt.Printf("to the victor goes the spoils: rewrote %s \n", secret)
@@ -691,7 +628,7 @@ func handleRequests() {
 func main() {
 	token := flag.String("token", "", "token used for to grab secrets from Vault")
 	secretEngine := flag.String("se", "", "specifies secret engine to grab secrets from in Vault")
-	vaultEndpoint := flag.String("vaultendpoint", "https://vault.norsk-tipping.no", "URL to the Vault installation.")
+	vaultEndpoint := flag.String("vaultendpoint", "", "URL to the Vault installation.")
 	pemFile := flag.String("cert", "", "used to create sealed secrets")
 	repoUrl := flag.String("repourl", "", "REPO url. e.g. https://uname:pwd@src_control/some/path/somerepo.git")
 	clonePath := flag.String("clonepath", "/tmp/clone", "Path in which to clone repo and used for base for appending keys.")
@@ -707,13 +644,18 @@ func main() {
 
 	})
 	if visited {
+
+		newConfig.vaultEndpoint = *vaultEndpoint
+		newConfig.secretEngine = *secretEngine
+		newConfig.token = *token
+		newConfig.destEnv = *destEnv
+		newConfig.pemFile = *pemFile
+		newConfig.clonePath = *clonePath
+		log.WithFields(log.Fields{
+			"config": newConfig,
+		}).Info("Setting  newConfig variables. preparing to run. ")
 		if validateSelftoken(*vaultEndpoint, *token) {
-			newConfig.vaultEndpoint = *vaultEndpoint
-			newConfig.secretEngine = *secretEngine
-			newConfig.token = *token
-			newConfig.destEnv = *destEnv
-			newConfig.pemFile = *pemFile
-			newConfig.clonePath = *clonePath
+
 			// start webserver
 			go handleRequests()
 
@@ -722,37 +664,42 @@ func main() {
 			err := os.MkdirAll(newpath, os.ModePerm)
 			CheckIfError(err)
 			GitClone(*clonePath, *repoUrl)
-			last := kvstore{}
+			last := &api.Secret{}
 			for {
 				t := time.Now()
 
 				if validateSelftoken(*vaultEndpoint, *token) {
 					timeStamp := t.Format(time.Stamp)
 					fmt.Printf("[%s] Getting list of secrets\n", timeStamp)
-					var list = getAllKVs(*vaultEndpoint, *secretEngine, *token)
-					for secret := range list.Data.Keys {
-						fmt.Printf("[*] Checking %s [*]\n", list.Data.Keys[secret])
+					var list, err = getAllKVs(newConfig.secretEngine, newConfig.token)
+					if err != nil {
+						fmt.Println("validateSelfToken list err:", err)
+					}
+					for _, secret := range list.Data["keys"].([]interface{}) {
+						fmt.Println("list.data[keys] secret =", secret)
+						fmt.Printf("[*] Checking %s [*]\n", secret.(string))
 
 						//make SealedSecrets
-						SealedSecret, SingleKVFromVault := getKVAndCreateSealedSecret(*vaultEndpoint, *secretEngine, list.Data.Keys[secret], *token, *destEnv, *pemFile)
+						SealedSecret, SingleKVFromVault := getKVAndCreateSealedSecret(newConfig.secretEngine, secret.(string), newConfig.token, newConfig.destEnv, newConfig.pemFile)
 
 						//ensure that path exists in order to write to it later.
-						newBase := ensurePathandreturnWritePath(*clonePath, *destEnv, list.Data.Keys[secret])
+						newBase := ensurePathandreturnWritePath(*clonePath, *destEnv, secret.(string))
 						if _, err := os.Stat(newBase); os.IsNotExist(err) {
 							fmt.Printf("%s does not exist, creating YAML \n", newBase)
 							SerializeAndWriteToFile(SealedSecret, newBase)
-						} else if !readSealedSecretAndCompareWithVaultStruct(list.Data.Keys[secret], SingleKVFromVault, newBase, *secretEngine) {
+						} else if !readSealedSecretAndCompareWithVaultStruct(secret.(string), SingleKVFromVault, newBase, newConfig.secretEngine) {
 							//readSealedSecretAndCompare returns true, meaning SealedSecret matches Vault KV, we assume we already have this secret and that Vault did not update.
 						} else {
 							// we need to update the secret.
 							fmt.Printf("[*] Mismatch between sealed secret and vault secret. Creating new sealed secret file. [*]\n")
 							SerializeAndWriteToFile(SealedSecret, newBase)
 						}
+
 					}
 					//..and push new files if there were any. If there are any ripe secrets, delete.
-					gitPush(*clonePath, *destEnv, *repoUrl)
+					gitPush(newConfig.clonePath, newConfig.destEnv, *repoUrl)
 					PickedRipeSecrets := PickRipeSecrets(last, list)
-					HarvestRipeSecrets(PickedRipeSecrets, *clonePath, *destEnv)
+					HarvestRipeSecrets(PickedRipeSecrets, newConfig.clonePath, newConfig.destEnv)
 					// we save last state of previous list.
 					last = list
 
