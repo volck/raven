@@ -213,8 +213,7 @@ func HarvestRipeSecrets(RipeSecrets []string, clonePath string, destEnv string) 
 
 func setSSHConfig() (auth transport.AuthMethod) {
 
-	//sshKey, err := ioutil.ReadFile("/secret/sshKey")
-	sshKey, err := ioutil.ReadFile(`\\p0home001\UnixHome\a01631\dev\raven\id_rsa`)
+	sshKey, err := ioutil.ReadFile("/secret/sshKey")
 	if err != nil {
 		log.WithFields(log.Fields{
 			"err": err,
