@@ -46,6 +46,18 @@ type config struct {
 	clonePath     string
 }
 
+func initLogging() {
+	// Log as JSON instead of the default ASCII formatter.
+	log.SetFormatter(&log.JSONFormatter{})
+
+	// Output to stdout instead of the default stderr
+	// Can be any io.Writer, see below for File example
+	log.SetOutput(os.Stdout)
+
+	// Only log the warning severity or above.
+	log.SetLevel(log.WarnLevel)
+}
+
 /*
 We assume program crashed and we need to tell Kubernetes this:
 https://kubernetes.io/docs/tasks/debug-application-cluster/determine-reason-pod-failure/
@@ -59,17 +71,21 @@ func WriteErrorToTerminationLog(errormsg string) {
 
 }
 
+/*
 func CheckIfError(err error) {
 	if err != nil {
-		fmt.Printf("err: %v \n", err)
+		log.WithFields(log.Fields{
+			"error": err,
+		}).Warn("CheckIfError()")
 	}
 }
+*/
 
 /*
 Alive checks for differences between two arrays
 */
 
-func Alive(slice []string, val string) bool {
+func Alive(slice []interface{}, val string) bool {
 	for _, item := range slice {
 		if item == val {
 			return true
@@ -84,20 +100,34 @@ PickRipeSecrets() uses Alive() to check if we have dead secrets
 */
 
 func PickRipeSecrets(PreviousKV *api.Secret, NewKV *api.Secret) (RipeSecrets []string) {
-	fmt.Printf("[*] PickRipeSecrets: PreviousKEYS: %v \n NewKEYS: %v [*] \n", PreviousKV.Data["keys"], NewKV.Data["keys"])
+	log.WithFields(log.Fields{
+		"previousKeys": PreviousKV.Data["keys"],
+		"newKV":        NewKV.Data["keys"],
+	}).Info("PickRipeSecrets is starting to compare lists")
 
 	if PreviousKV.Data["keys"] == nil || NewKV.Data["keys"] == nil {
 		// we assume this is our first run so we do not know difference yet.
-		fmt.Println("PickRipeSecrets: we do nothing.")
+		log.WithFields(log.Fields{
+			"previousKeys": PreviousKV.Data["keys"],
+			"newKV":        NewKV.Data["keys"],
+		}).Info("PickRipeSecrets compared lists and found that either of the lists were nil")
 
 	} else if reflect.DeepEqual(PreviousKV.Data["keys"], NewKV.Data["keys"]) {
-		fmt.Println("PickRipeSecrets: Lists match.")
+		log.WithFields(log.Fields{
+			"previousKeys": PreviousKV.Data["keys"],
+			"newKV":        NewKV.Data["keys"],
+		}).Info("PickRipeSecrets: Lists match.")
 	} else {
-		for i, _ := range PreviousKV.Data["keys"].([]string) {
-			isAlive := Alive(NewKV.Data["keys"].([]string), PreviousKV.Data["keys"].([]string)[i])
+		for _, v := range PreviousKV.Data["keys"].([]interface{}) {
+			isAlive := Alive(NewKV.Data["keys"].([]interface{}), v.(string))
 			if !isAlive {
-				fmt.Printf("[*] gosh darn it,  %s is ripe for pickin' [*] ", PreviousKV.Data["keys"].([]string)[i])
-				RipeSecrets = append(RipeSecrets, PreviousKV.Data["keys"].([]string)[i])
+				log.WithFields(log.Fields{
+					"RipeSecret": PreviousKV.Data,
+				}).Info("PickRipeSecrets: We have found a ripe secret. adding it to list of ripesecrets now.")
+				RipeSecrets = append(RipeSecrets, v.(string))
+				log.WithFields(log.Fields{
+					"RipeSecret": RipeSecrets,
+				}).Info("PickRipeSecrets final list of ripe secrets")
 			}
 		}
 	}
@@ -114,22 +144,48 @@ func HarvestRipeSecrets(RipeSecrets []string, clonePath string, destEnv string) 
 	} else {
 
 		r, err := git.PlainOpen(clonePath)
-		CheckIfError(err)
+		if err != nil {
+			log.WithFields(log.Fields{
+				"err": err,
+			}).Info("HarvestRipeSecrets plainopen failed")
+		}
 
 		w, err := r.Worktree()
-		CheckIfError(err)
-
+		if err != nil {
+			log.WithFields(log.Fields{
+				"err": err,
+			}).Info("HarvestRipeSecrets worktree failed")
+		}
 		//Iterate ripe secrets and remove them from worktree and push changes.
 		for ripe := range RipeSecrets {
 			base := filepath.Join("declarative", destEnv, "sealedsecrets")
 			newbase := base + "/" + RipeSecrets[ripe] + ".yaml"
 			_, err = w.Remove(newbase)
-			CheckIfError(err)
-			fmt.Printf("[*] %s is ripe, we mark it for deletion [*] \n", newbase)
+			if err != nil {
+				log.WithFields(log.Fields{
+					"err": err,
+				}).Error("HarvestRipeSecrets worktree.Remove failed")
+			}
+			log.WithFields(log.Fields{
+				"path":       newbase,
+				"ripeSecret": RipeSecrets[ripe],
+			}).Info("HarvestRipeSecrets found ripe secret. marked for deletion")
 		}
 		status, err := w.Status()
-		CheckIfError(err)
+
+		if err != nil {
+			log.WithFields(log.Fields{
+				"err": err,
+			}).Error("HarvestRipeSecret Worktree status failed")
+		}
+
 		if !status.IsClean() {
+
+			log.WithFields(log.Fields{
+				"worktree": w,
+				"status":   status,
+			}).Info("HarvestRipeSecret !status.IsClean() ")
+
 			commit, err := w.Commit(fmt.Sprintf("Raven removed ripe secret from git"), &git.CommitOptions{
 				Author: &object.Signature{
 					Name:  "Raven",
@@ -139,25 +195,38 @@ func HarvestRipeSecrets(RipeSecrets []string, clonePath string, destEnv string) 
 			})
 			err = r.Push(&git.PushOptions{})
 			obj, err := r.CommitObject(commit)
-			CheckIfError(err)
-			fmt.Printf("commit: %s \n", obj)
+			if err != nil {
+				log.WithFields(log.Fields{
+					"err": err,
+					"obj": obj,
+				}).Error("HarvestRipeSecret commitObject failed")
+			}
+			log.WithFields(log.Fields{
+				"commitObject": obj,
+			}).Info("HarvestRipeSecret commit")
 
 		}
-		fmt.Printf("[*] HarvestRipeSecrets done [*] \n")
+		log.WithFields(log.Fields{
+		}).Info("HarvestRipeSecrets done")
 	}
 }
 
 func setSSHConfig() (auth transport.AuthMethod) {
 
-	sshKey, err := ioutil.ReadFile("/secret/sshKey")
-
+	//sshKey, err := ioutil.ReadFile("/secret/sshKey")
+	sshKey, err := ioutil.ReadFile(`\\p0home001\UnixHome\a01631\dev\raven\id_rsa`)
 	if err != nil {
-		log.Fatalf("unable to read private key: %v", err)
+		log.WithFields(log.Fields{
+			"err": err,
+		}).Fatal("setSSHConfig: unable to read private key ")
 	}
 
 	signer, err := ssh.ParsePrivateKey(sshKey)
 	if err != nil {
-		return
+		WriteErrorToTerminationLog("setSSHConfig: unable to read private key")
+		log.WithFields(log.Fields{
+			"err": err,
+		}).Fatal("setSSHConfig: ParsePrivateKey err")
 	}
 	hostKeyCallback := func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 		return nil
@@ -193,51 +262,83 @@ func GitClone(LocalPath string, url string) {
 		}
 	}
 	// we do the clone
-
-	fmt.Printf("[*] Raven GitClone [*] \n")
+	log.WithFields(log.Fields{
+	}).Info("Raven GitClone")
 
 	remote, err := git.PlainClone(LocalPath, false, cloneOptions)
 	if err != nil {
-		fmt.Printf("gitclone: %s \n", err)
+		log.WithFields(log.Fields{
+			"error": err,
+		}).Error("Raven GitClone error")
 
 	} else {
-		CheckIfError(err)
-		head, _ := remote.Head()
-		fmt.Printf("[*] Raven GitClone complete, current HEAD: %s [*] \n", head)
+		head, err := remote.Head()
+		if err != nil {
+			log.WithFields(log.Fields{
+				"head":  head,
+				"error": err,
+			}).Warn("Gitclone Remote.head()")
+		}
+		log.WithFields(log.Fields{
+			"head": head,
+		}).Info("Raven GitClone complete")
 	}
 }
 
 func gitPush(LocalPath string, env string, url string) {
-	fmt.Println("this is GitPush. ")
 	r, err := git.PlainOpen(LocalPath)
 	if err != nil {
-		fmt.Printf("plainOpen failed here, %v \n", err)
+		WriteErrorToTerminationLog("plainOpen failed")
+		log.WithFields(log.Fields{
+			"error": err,
+		}).Error("Raven PlainOpen failed")
 	}
 
 	w, err := r.Worktree()
-	CheckIfError(err)
+	if err != nil {
+		WriteErrorToTerminationLog("gitPush failed")
+		log.WithFields(log.Fields{
+			"error": err,
+		}).Error("GitPush WorkTree error")
+	}
 
 	// Pull the latest changes from the origin remote and merge into the current branch
-	fmt.Println("[*] gitPush is now pulling [*]")
+	log.Info("GitPush pulling")
 	if strings.HasPrefix(url, "ssh:") {
 		err = w.Pull(&git.PullOptions{RemoteName: "origin", Auth: setSSHConfig()})
 		if err != nil {
-			fmt.Printf("err PULLING: %v \n", err.Error())
+			log.WithFields(log.Fields{
+				"error": err,
+			}).Error("Raven gitPush:Pull error")
 		}
 	} else {
 		err = w.Pull(&git.PullOptions{RemoteName: "origin"})
 		if err != nil {
+			log.WithFields(log.Fields{
+				"error": err,
+			}).Error("Raven gitPush:Pull error")
 			fmt.Printf("err PULLING: %v \n", err.Error())
 		}
 	}
 
 	status, err := w.Status()
-	CheckIfError(err)
-	fmt.Println(status)
+	if err != nil {
+		log.WithFields(log.Fields{
+			"error": err,
+		}).Error("Raven gitPush:worktree status error")
+	}
+	log.WithFields(log.Fields{
+		"status": status,
+	}).Info("Worktree status")
+
 	if !status.IsClean() {
 		fmt.Printf("[*] gitPush found that status is not clean, making commit with changes [*] \n")
 		_, err = w.Add(".")
-		CheckIfError(err)
+		if err != nil {
+			log.WithFields(log.Fields{
+				"error": err,
+			}).Error("Raven gitPush:worktree add error")
+		}
 
 		// We can verify the current status of the worktree using the method Status.
 
@@ -248,6 +349,11 @@ func gitPush(LocalPath string, env string, url string) {
 				When:  time.Now(),
 			},
 		})
+		if err != nil {
+			log.WithFields(log.Fields{
+				"error": err,
+			}).Error("GitPush Worktree commit error")
+		}
 
 		// we need to set creds here if its a ssh connection,
 		if strings.HasPrefix(url, "ssh:") {
@@ -258,17 +364,26 @@ func gitPush(LocalPath string, env string, url string) {
 		} else {
 			err = r.Push(&git.PushOptions{})
 			if err != nil {
-				fmt.Printf("err PULLING: %v \n", err.Error())
+				log.WithFields(log.Fields{
+					"error": err,
+				}).Error("Raven gitPush error")
 			}
 			// Prints the current HEAD to verify that all worked well.
-
-			fmt.Println("git show -s")
 			obj, err := r.CommitObject(commit)
-			CheckIfError(err)
-			fmt.Printf("commit: %s \n", obj)
+			fmt.Println("head: ", obj)
+
+			if err != nil {
+				log.WithFields(log.Fields{
+					"obj": obj,
+				}).Error("git show -s")
+			}
+			log.WithFields(log.Fields{
+				"obj": obj,
+			}).Info("git show -s: commit")
 			genericPostWebHook()
 		}
-		fmt.Println("[*] gitPush finished [*]")
+		log.Info("[*] gitPush finished [*]")
+
 	}
 }
 
@@ -286,7 +401,6 @@ func getAllKVs(env string, token string) (Secret *api.Secret, err error) {
 	url := env + "/metadata"
 
 	Secret, err = client.Logical().List(url)
-	fmt.Println("This is getAllKVs: reflect of Secret is:", reflect.TypeOf(Secret))
 	if err != nil {
 		fmt.Println("getallKVs client.Logical().List(url) err", err)
 	}
@@ -382,17 +496,38 @@ func createK8sSecret(name string, Namespace string, sourceenv string, dataFields
 	Annotations["source"] = sourceenv
 
 	for k, v := range dataFields.Data["data"].(map[string]interface{}) {
-		fmt.Printf("datafields[data]: %s:%s \n ", k, v)
+		log.WithFields(log.Fields{
+			"key":        k,
+			"value":      v,
+			"datafields": dataFields.Data["data"],
+		}).Debug("createK8sSecret: dataFields.Data[data] iterate ")
+
 		if strings.HasPrefix(v.(string), "base64:") {
 			stringSplit := strings.Split(v.(string), ":")
 			if isbase64(stringSplit[1]) {
 				data[k], _ = base64.StdEncoding.DecodeString(stringSplit[1])
+				log.WithFields(log.Fields{
+					"key":                 k,
+					"value":               v,
+					"base64EncodedString": stringSplit[1],
+					"datafields":          dataFields.Data["data"],
+				}).Debug("createK8sSecret: dataFields.Data[data] found base64-encoding")
 			}
 		}
 		if k == "raven/description" {
 			Annotations[k] = v.(string)
+			log.WithFields(log.Fields{
+				"key":        k,
+				"value":      v,
+				"datafields": dataFields.Data["data"],
+			}).Debug("createK8sSecret: dataFields.Data[data] found raven/description")
 		} else {
 			stringdata[k] = v.(string)
+			log.WithFields(log.Fields{
+				"key":        k,
+				"value":      v,
+				"datafields": dataFields.Data["data"],
+			}).Debug("createK8sSecret: dataFields.Data[data] catch all. putting value in stringdata[]")
 		}
 
 	}
@@ -400,15 +535,31 @@ func createK8sSecret(name string, Namespace string, sourceenv string, dataFields
 		// we handle descriptions for KVs here, in order to show which secrets are handled by which SSG.
 		switch v.(type) {
 		case float64:
+
 			float64value := reflect.ValueOf(v)
 			float64convert := strconv.FormatFloat(float64value.Float(), 'f', -1, 64)
 			Annotations[k] = float64convert
+			log.WithFields(log.Fields{
+				"key":        k,
+				"value":      v,
+				"datafields": dataFields.Data["metadata"],
+			}).Debug("createK8sSecret: dataFields.Data[metadata] case match float64 ")
 		case string:
 			Annotations[k] = v.(string)
+			log.WithFields(log.Fields{
+				"key":        k,
+				"value":      v,
+				"datafields": dataFields.Data["metadata"],
+			}).Debug("createK8sSecret: dataFields.Data[metadata] case match string ")
 		case bool:
 			booleanvalue := reflect.ValueOf(v)
 			boolconvert := strconv.FormatBool(booleanvalue.Bool())
 			Annotations[k] = boolconvert
+			log.WithFields(log.Fields{
+				"key":        k,
+				"value":      v,
+				"datafields": dataFields.Data["metadata"],
+			}).Debug("createK8sSecret: dataFields.Data[metadata] case match bool ")
 		}
 
 	}
@@ -427,6 +578,14 @@ func createK8sSecret(name string, Namespace string, sourceenv string, dataFields
 		StringData: stringdata,
 		Type:       "Opaque",
 	}
+
+	log.WithFields(log.Fields{
+		"typeMeta":   secret.TypeMeta,
+		"objectMeta": secret.ObjectMeta,
+		"data":       data,
+		"stringData": stringdata,
+		"secret":     secret,
+	}).Debug("createK8sSecret: made k8s secret object")
 	return
 }
 
@@ -439,22 +598,39 @@ k8ssecret: kubernetes secret generated from createK8sSecret when iterating list 
 func createSealedSecret(publickeyPath string, k8ssecret *v1.Secret) (sealedSecret *sealedSecretPkg.SealedSecret) {
 	read, err := ioutil.ReadFile(publickeyPath)
 	if err != nil {
-		fmt.Println(err)
+		log.WithFields(log.Fields{
+			"publickeyPath": publickeyPath,
+			"error":         err,
+		}).Fatal("createSealedSecret.ioutil.ReadFile: Cannot read publickeyPath")
 	}
 
 	block, _ := pem.Decode([]byte(read))
 	if block == nil {
+		log.WithFields(log.Fields{
+			"pemDecode": publickeyPath,
+		}).Fatal("createSealedSecret.Pem.Decode() failed to parse PEM block containing the public key")
 		WriteErrorToTerminationLog("failed to parse PEM block containing the public key")
 	}
 	var pub *x509.Certificate
 
 	pub, err = x509.ParseCertificate(block.Bytes)
 	if err != nil {
+		log.WithFields(log.Fields{
+			"block.Bytes": block.Bytes,
+			"error":       err.Error(),
+		}).Fatal("createSealedSecret.Pem.Decode() failed to parse DER encoded public key: ")
 		WriteErrorToTerminationLog("failed to parse DER encoded public key: " + err.Error())
 	}
 	var codecs serializer.CodecFactory
 	rsaPublicKey, _ := pub.PublicKey.(*rsa.PublicKey)
 	sealedSecret, err = sealedSecretPkg.NewSealedSecret(codecs, rsaPublicKey, k8ssecret)
+	if err != nil {
+		log.WithFields(log.Fields{
+			"sealedSecret": sealedSecret,
+			"error":        err.Error(),
+		}).Error("createSealedSecret.sealedSecretPkg.NewSealedSecret")
+		WriteErrorToTerminationLog("failed to parse DER encoded public key: " + err.Error())
+	}
 	// apparently we need to specifically assign these fields.
 	sealedSecret.TypeMeta = k8ssecret.TypeMeta
 	sealedSecret.ObjectMeta = k8ssecret.ObjectMeta
@@ -464,11 +640,19 @@ func createSealedSecret(publickeyPath string, k8ssecret *v1.Secret) (sealedSecre
 func SerializeAndWriteToFile(SealedSecret *sealedSecretPkg.SealedSecret, fullPath string) {
 	f, err := os.Create(fullPath)
 	if err != nil {
-		fmt.Println(err)
+		log.WithFields(log.Fields{
+			"fullPath": fullPath,
+			"error":    err.Error(),
+		}).Fatal("SerializeAndWriteToFile.Os.Create")
+		WriteErrorToTerminationLog(err.Error())
 	}
 	e := k8sJson.NewYAMLSerializer(k8sJson.DefaultMetaFactory, nil, nil)
 	err = e.Encode(SealedSecret, f)
 	if err != nil {
+		log.WithFields(log.Fields{
+			"fullPath": fullPath,
+			"error":    err.Error(),
+		}).Fatal("SerializeAndWriteToFile.e.encode")
 		WriteErrorToTerminationLog(err.Error())
 	}
 }
@@ -479,33 +663,59 @@ func SerializeAndWriteToFile(SealedSecret *sealedSecretPkg.SealedSecret, fullPat
 */
 
 func readSealedSecretAndCompareWithVaultStruct(secret string, kv *api.Secret, filepointer string, secretEngine string) (NeedUpdate bool) {
-
+	fmt.Println("readSealedSecretAndCompareWithVaultStruct comparing stuff")
 	NeedUpdate = false
 	VaultTimeStamp := kv.Data["metadata"].(map[string]interface{})["created_time"]
 
 	//grab SealedSecret file
 	data, err := ioutil.ReadFile(filepointer)
 	if err != nil {
-		log.Fatalln(err)
+		WriteErrorToTerminationLog(err.Error())
+		log.WithFields(log.Fields{
+			"filepointer": filepointer,
+			"error":       err.Error(),
+		}).Error("readSealedSecretAndCompareWithVaultStruct.ioutil.ReadFile")
+
 	}
 	//unmarshal it into a interface
 	v := make(map[string]interface{})
 	err = yaml.Unmarshal(data, &v)
 	if err != nil {
-		log.Fatalln(err)
+		WriteErrorToTerminationLog(err.Error())
+		log.WithFields(log.Fields{
+			"data":  data,
+			"v":     v,
+			"error": err.Error(),
+		}).Fatal("readSealedSecretAndCompareWithVaultStruct.YAML.Unmarshal")
 	}
 	// hacky way of getting variable
 	if _, ok := v["metadata"]; ok {
 		if !ok {
+			log.WithFields(log.Fields{
+				"ok-status": ok,
+			}).Info("readSealedSecretAndCompareWithVaultStruct: we need a update here")
 			NeedUpdate = true
 		}
 		SealedSecretTime := v["metadata"].(map[interface{}]interface{})["annotations"].(map[interface{}]interface{})["created_time"]
 		SealedSecretSource := v["metadata"].(map[interface{}]interface{})["annotations"].(map[interface{}]interface{})["source"]
 		if VaultTimeStamp == SealedSecretTime || SealedSecretSource != secretEngine {
+			fmt.Println("are we ever going here? VaultTimeStamp == SealedSecretTime || SealedSecretSource != secretEngine")
+			log.WithFields(log.Fields{
+				"VaultTimeStamp":     VaultTimeStamp,
+				"SealedSecretTime":   SealedSecretTime,
+				"SealedSecretSource": SealedSecretSource,
+				"secretEngine":       secretEngine,
+				"NeedUpdate":         NeedUpdate,
+			}).Info("readSealedSecretAndCompareWithVaultStruct either we have a match here, or secret is from another secretengine")
 			return
 		} else {
-			fmt.Printf("[*] Changes were made to %s:  Vault: %s \t SealedSecretTime: %s [*] \n [*] \n", secret, VaultTimeStamp, SealedSecretTime)
 			NeedUpdate = true
+			log.WithFields(log.Fields{
+				"secret":           secret,
+				"vaultTimestamp":   VaultTimeStamp,
+				"SealedSecretTime": SealedSecretTime,
+				"NeedUpdate":       NeedUpdate,
+			}).Info("readSealedSecretAndCompareWithVaultStruct found changes were made here")
 		}
 	}
 	return
@@ -521,9 +731,17 @@ getKVAndCreateSealedSecret combines several "maker-methods":
 */
 func getKVAndCreateSealedSecret(secretEngine string, secretName string, token string, destEnv string, pemFile string) (SealedSecret *sealedSecretPkg.SealedSecret, SingleKVFromVault *api.Secret) {
 	SingleKVFromVault = getSingleKV(secretEngine, secretName)
+	log.WithFields(log.Fields{
+		"SingleKVFromVault": SingleKVFromVault,
+	}).Debug("getKVAndCreateSealedSecret.SingleKVFromVault")
 	k8sSecret := createK8sSecret(secretName, destEnv, secretEngine, SingleKVFromVault)
+	log.WithFields(log.Fields{
+		"k8sSecret": k8sSecret,
+	}).Debug("getKVAndCreateSealedSecret.k8sSecret")
 	SealedSecret = createSealedSecret(pemFile, &k8sSecret)
-
+	log.WithFields(log.Fields{
+		"SealedSecret": SealedSecret,
+	}).Debug("getKVAndCreateSealedSecret.SealedSecret")
 	return
 }
 
@@ -561,11 +779,17 @@ func client() (*api.Client, error) {
 	}
 	client, err := api.NewClient(config)
 	if err != nil {
-		fmt.Println("client api.newclient err:", err)
+		log.WithFields(log.Fields{
+			"config": config,
+			"error":  err.Error(),
+		}).Fatal("client.api.newclient() failed")
 	}
 	client.SetToken(newConfig.token)
 	if err != nil {
-		fmt.Println("client().SetToken() err:", err)
+		log.WithFields(log.Fields{
+			"config": config,
+			"error":  err.Error(),
+		}).Fatal("client.api.SetToken() failed")
 	}
 	return client, err
 }
@@ -599,13 +823,19 @@ func genericPostWebHook() {
 func forceRefresh(wg *sync.WaitGroup) {
 	var list, err = getAllKVs(newConfig.secretEngine, newConfig.token)
 	if err != nil {
-		fmt.Println("forceRefresh: getAllKVs err:", err)
+		log.WithFields(log.Fields{
+			"list":  list,
+			"error": err.Error(),
+		}).Warn("forceRefresh().getAllKVs failed")
 	}
 	for _, secret := range list.Data["Keys"].([]string) {
 		SealedSecret, _ := getKVAndCreateSealedSecret(newConfig.secretEngine, secret, newConfig.token, newConfig.destEnv, newConfig.pemFile)
 		newBase := ensurePathandreturnWritePath(newConfig.clonePath, newConfig.destEnv, secret)
 		SerializeAndWriteToFile(SealedSecret, newBase)
-		fmt.Printf("to the victor goes the spoils: rewrote %s \n", secret)
+		log.WithFields(log.Fields{
+			"secret":  secret,
+			"newBase": newBase,
+		}).Info("forceRefresh() rewrote secret")
 	}
 	wg.Done()
 
@@ -616,7 +846,8 @@ func refreshHandler(w http.ResponseWriter, r *http.Request) {
 	wg.Add(1)
 	go forceRefresh(&wg)
 	wg.Wait()
-	fmt.Fprintf(w, "forceRefresh done.")
+	log.WithFields(log.Fields{
+	}).Info("refreshHandler:forceRefresh() done")
 }
 
 func handleRequests() {
@@ -653,7 +884,7 @@ func main() {
 		newConfig.clonePath = *clonePath
 		log.WithFields(log.Fields{
 			"config": newConfig,
-		}).Info("Setting  newConfig variables. preparing to run. ")
+		}).Debug("Setting  newConfig variables. preparing to run. ")
 		if validateSelftoken(*vaultEndpoint, *token) {
 
 			// start webserver
@@ -662,44 +893,63 @@ func main() {
 			//ensure paths for first time.
 			newpath := filepath.Join(*clonePath, *secretEngine)
 			err := os.MkdirAll(newpath, os.ModePerm)
-			CheckIfError(err)
+			if err != nil {
+				log.WithFields(log.Fields{
+					"NewPath": newpath,
+				}).Error("os.Mkdir failed when trying to ensure paths for first time")
+				WriteErrorToTerminationLog("os.Mkdir failed when trying to ensure paths for first time")
+			}
+
 			GitClone(*clonePath, *repoUrl)
 			last := &api.Secret{}
 			for {
-				t := time.Now()
-
 				if validateSelftoken(*vaultEndpoint, *token) {
-					timeStamp := t.Format(time.Stamp)
-					fmt.Printf("[%s] Getting list of secrets\n", timeStamp)
+					log.WithFields(log.Fields{
+					}).Info("Validated Token: grabbing list of secrets")
+
 					var list, err = getAllKVs(newConfig.secretEngine, newConfig.token)
 					if err != nil {
-						fmt.Println("validateSelfToken list err:", err)
+						log.WithFields(log.Fields{
+							"error": err,
+						}).Error("getAllKVs list error")
 					}
 					for _, secret := range list.Data["keys"].([]interface{}) {
-						fmt.Println("list.data[keys] secret =", secret)
-						fmt.Printf("[*] Checking %s [*]\n", secret.(string))
 
+						log.WithFields(log.Fields{
+							"secret": secret,
+						}).Info("Checking secret")
 						//make SealedSecrets
 						SealedSecret, SingleKVFromVault := getKVAndCreateSealedSecret(newConfig.secretEngine, secret.(string), newConfig.token, newConfig.destEnv, newConfig.pemFile)
 
 						//ensure that path exists in order to write to it later.
 						newBase := ensurePathandreturnWritePath(*clonePath, *destEnv, secret.(string))
 						if _, err := os.Stat(newBase); os.IsNotExist(err) {
-							fmt.Printf("%s does not exist, creating YAML \n", newBase)
+							log.WithFields(log.Fields{
+								"SealedSecret": newBase,
+							}).Info("SealedSecret does already exist, need to create YAML")
 							SerializeAndWriteToFile(SealedSecret, newBase)
 						} else if !readSealedSecretAndCompareWithVaultStruct(secret.(string), SingleKVFromVault, newBase, newConfig.secretEngine) {
-							//readSealedSecretAndCompare returns true, meaning SealedSecret matches Vault KV, we assume we already have this secret and that Vault did not update.
+							log.WithFields(log.Fields{
+								"secret": secret,
+							}).Info("readSealedSecretAndCompare: we already have this secret. Vault did not update")
 						} else {
 							// we need to update the secret.
-							fmt.Printf("[*] Mismatch between sealed secret and vault secret. Creating new sealed secret file. [*]\n")
+							log.WithFields(log.Fields{
+								"SealedSecret": secret,
+								"newBase":      newBase,
+							}).Info("readSealedSecretAndCompare: Found new secret, need to create new sealed secret file")
 							SerializeAndWriteToFile(SealedSecret, newBase)
 						}
 
 					}
 					//..and push new files if there were any. If there are any ripe secrets, delete.
-					gitPush(newConfig.clonePath, newConfig.destEnv, *repoUrl)
 					PickedRipeSecrets := PickRipeSecrets(last, list)
 					HarvestRipeSecrets(PickedRipeSecrets, newConfig.clonePath, newConfig.destEnv)
+					gitPush(newConfig.clonePath, newConfig.destEnv, *repoUrl)
+					log.WithFields(log.Fields{
+						"PickedRipeSecrets": PickedRipeSecrets,
+					}).Info("PickedRipeSecrets list")
+
 					// we save last state of previous list.
 					last = list
 
@@ -710,16 +960,26 @@ func main() {
 					sleepTime := rand.Intn(max-min) + min
 
 					//now we sleep randomly
+					log.WithFields(log.Fields{
+						"sleepTime": sleepTime,
+					}).Debug("Going to sleep.")
 					time.Sleep(time.Duration(sleepTime) * time.Second)
+					log.WithFields(log.Fields{
+						"sleepTime": sleepTime,
+					}).Debug("Sleep done.")
 
 				} else {
-					fmt.Println("[*] token is invalid, someone needs to update this![*]")
+					log.WithFields(log.Fields{
+						"token": token,
+					}).Warn("Token is invalid, need to update. ")
 					WriteErrorToTerminationLog("[*] token is invalid, someone needs to update this![*]")
 					os.Exit(1)
 				}
 			}
 		} else {
-			fmt.Println("[*] token is invalid [*]")
+			log.WithFields(log.Fields{
+				"token": token,
+			}).Warn("Token is invalid, need to update. ")
 			WriteErrorToTerminationLog("[*] token is invalid, someone needs to update this![*]")
 			os.Exit(1)
 		}
