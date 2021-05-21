@@ -206,8 +206,7 @@ func HarvestRipeSecrets(RipeSecrets []string, clonePath string, destEnv string) 
 			}).Info("HarvestRipeSecret commit")
 
 		}
-		log.WithFields(log.Fields{
-		}).Info("HarvestRipeSecrets done")
+		log.WithFields(log.Fields{}).Info("HarvestRipeSecrets done")
 	}
 }
 
@@ -261,8 +260,7 @@ func GitClone(LocalPath string, url string) {
 		}
 	}
 	// we do the clone
-	log.WithFields(log.Fields{
-	}).Info("Raven GitClone")
+	log.WithFields(log.Fields{}).Info("Raven GitClone")
 
 	remote, err := git.PlainClone(LocalPath, false, cloneOptions)
 	if err != nil {
@@ -446,7 +444,7 @@ func validateSelftoken(vaultEndPoint string, token string) (valid bool) {
 
 	client, err := client()
 	if err != nil {
-		fmt.Println("client.ValidateSelfToken() failed: %s \n ", err)
+		fmt.Printf("client.ValidateSelfToken() failed: %s \n ", err)
 	}
 
 	_, err = client.Auth().Token().LookupSelf()
@@ -752,7 +750,7 @@ ensurePathandreturnWritePath:
 makes sure that basePath exists for SerializeAndWriteToFile, returning basePath.
 */
 
-func ensurePathandreturnWritePath(clonePath string, destEnv string, secretName string, ) (basePath string) {
+func ensurePathandreturnWritePath(clonePath string, destEnv string, secretName string) (basePath string) {
 	base := filepath.Join(clonePath, "declarative", destEnv, "sealedsecrets")
 	os.MkdirAll(base, os.ModePerm)
 	basePath = base + "/" + secretName + ".yaml"
@@ -845,8 +843,7 @@ func refreshHandler(w http.ResponseWriter, r *http.Request) {
 	wg.Add(1)
 	go forceRefresh(&wg)
 	wg.Wait()
-	log.WithFields(log.Fields{
-	}).Info("refreshHandler:forceRefresh() done")
+	log.WithFields(log.Fields{}).Info("refreshHandler:forceRefresh() done")
 }
 
 func handleRequests() {
@@ -903,8 +900,7 @@ func main() {
 			last := &api.Secret{}
 			for {
 				if validateSelftoken(*vaultEndpoint, *token) {
-					log.WithFields(log.Fields{
-					}).Info("Validated Token: grabbing list of secrets")
+					log.WithFields(log.Fields{}).Info("Validated Token: grabbing list of secrets")
 
 					var list, err = getAllKVs(newConfig.secretEngine, newConfig.token)
 					if err != nil {
