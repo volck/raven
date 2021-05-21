@@ -44,6 +44,7 @@ type config struct {
 	destEnv       string
 	pemFile       string
 	clonePath     string
+	repoUrl       string
 }
 
 func initLogging() {
@@ -122,7 +123,7 @@ func PickRipeSecrets(PreviousKV *api.Secret, NewKV *api.Secret) (RipeSecrets []s
 			isAlive := Alive(NewKV.Data["keys"].([]interface{}), v.(string))
 			if !isAlive {
 				log.WithFields(log.Fields{
-					"RipeSecret": PreviousKV.Data,
+					"PreviousKV.Data": PreviousKV.Data,
 				}).Info("PickRipeSecrets: We have found a ripe secret. adding it to list of ripesecrets now.")
 				RipeSecrets = append(RipeSecrets, v.(string))
 				log.WithFields(log.Fields{
@@ -193,21 +194,37 @@ func HarvestRipeSecrets(RipeSecrets []string, clonePath string, destEnv string) 
 					When:  time.Now(),
 				},
 			})
-			err = r.Push(&git.PushOptions{})
-			obj, err := r.CommitObject(commit)
-			if err != nil {
+
+			if strings.HasPrefix(newConfig.repoUrl, "ssh:") {
+				err = r.Push(&git.PushOptions{Auth: setSSHConfig()})
+				if err != nil {
+					panic(err)
+				}
+			} else {
+				err = r.Push(&git.PushOptions{})
+				if err != nil {
+					log.WithFields(log.Fields{
+						"error": err,
+					}).Error("Raven gitPush error")
+				}
+				// Prints the current HEAD to verify that all worked well.
+				obj, err := r.CommitObject(commit)
+				fmt.Println("head: ", obj)
+
+				if err != nil {
+					log.WithFields(log.Fields{
+						"obj": obj,
+					}).Error("git show -s")
+				}
 				log.WithFields(log.Fields{
-					"err": err,
 					"obj": obj,
-				}).Error("HarvestRipeSecret commitObject failed")
+				}).Info("git show -s: commit")
+				genericPostWebHook()
 			}
 			log.WithFields(log.Fields{
-				"commitObject": obj,
-			}).Info("HarvestRipeSecret commit")
+			}).Info("HarvestRipeSecrets done")
 
 		}
-		log.WithFields(log.Fields{
-		}).Info("HarvestRipeSecrets done")
 	}
 }
 
@@ -765,7 +782,9 @@ var newConfig = config{
 	token:         "",
 	destEnv:       "",
 	pemFile:       "",
-	clonePath:     ""}
+	clonePath:     "",
+	repoUrl:       "",
+}
 
 /*
 We need to init the client a lot so this is a helper function which returns a fresh client.
@@ -874,13 +893,13 @@ func main() {
 
 	})
 	if visited {
-
 		newConfig.vaultEndpoint = *vaultEndpoint
 		newConfig.secretEngine = *secretEngine
 		newConfig.token = *token
 		newConfig.destEnv = *destEnv
 		newConfig.pemFile = *pemFile
 		newConfig.clonePath = *clonePath
+		newConfig.repoUrl = *repoUrl
 		log.WithFields(log.Fields{
 			"config": newConfig,
 		}).Debug("Setting  newConfig variables. preparing to run. ")
@@ -912,67 +931,151 @@ func main() {
 							"error": err,
 						}).Error("getAllKVs list error")
 					}
-					for _, secret := range list.Data["keys"].([]interface{}) {
+					if list == nil {
+						log.Info("list is nil. We should check if we have a directory full of files that should be deleted from git.")
 
-						log.WithFields(log.Fields{
-							"secret": secret,
-						}).Info("Checking secret")
-						//make SealedSecrets
-						SealedSecret, SingleKVFromVault := getKVAndCreateSealedSecret(newConfig.secretEngine, secret.(string), newConfig.token, newConfig.destEnv, newConfig.pemFile)
-
-						//ensure that path exists in order to write to it later.
-						newBase := ensurePathandreturnWritePath(*clonePath, *destEnv, secret.(string))
-						if _, err := os.Stat(newBase); os.IsNotExist(err) {
+						base := filepath.Join(newConfig.clonePath, "declarative", newConfig.destEnv, "sealedsecrets")
+						files, err := ioutil.ReadDir(base)
+						if err != nil {
+							fmt.Println(err)
+						}
+						r, err := git.PlainOpen(newConfig.clonePath)
+						if err != nil {
 							log.WithFields(log.Fields{
-								"SealedSecret": newBase,
-							}).Info("SealedSecret does already exist, need to create YAML")
-							SerializeAndWriteToFile(SealedSecret, newBase)
-						} else if !readSealedSecretAndCompareWithVaultStruct(secret.(string), SingleKVFromVault, newBase, newConfig.secretEngine) {
+								"err": err,
+							}).Info("HarvestRipeSecrets plainopen failed")
+						}
+						w, err := r.Worktree()
+						if err != nil {
+							log.WithFields(log.Fields{
+								"err": err,
+							}).Info("HarvestRipeSecrets worktree failed")
+						}
+						if len(files) > 0 {
+							for _, f := range files {
+								base := filepath.Join("declarative", newConfig.destEnv, "sealedsecrets")
+								newbase := base + "/" + f.Name()
+								_, err = w.Remove(newbase)
+								if err != nil {
+									log.WithFields(log.Fields{
+										"err": err,
+									}).Error("HarvestRipeSecrets worktree.Remove failed")
+								}
+								log.WithFields(log.Fields{
+									"path":       newbase,
+									"ripeSecret": f.Name(),
+								}).Info("HarvestRipeSecrets found ripe secret. marked for deletion")
+
+							}
+							status, err := w.Status()
+							if err != nil {
+								log.WithFields(log.Fields{
+									"status": status,
+								}).Info("Worktree.status failed")
+							}
+
+							if !status.IsClean() {
+
+								log.WithFields(log.Fields{
+									"worktree": w,
+									"status":   status,
+								}).Info("HarvestRipeSecret !status.IsClean() ")
+
+								commit, err := w.Commit(fmt.Sprintf("Raven removed ripe secret from git"), &git.CommitOptions{
+									Author: &object.Signature{
+										Name:  "Raven",
+										Email: "itte@tæll.no",
+										When:  time.Now(),
+									},
+								})
+
+								if strings.HasPrefix(newConfig.repoUrl, "ssh:") {
+									err = r.Push(&git.PushOptions{Auth: setSSHConfig()})
+									if err != nil {
+										panic(err)
+									}
+								} else {
+									err = r.Push(&git.PushOptions{})
+									if err != nil {
+										log.WithFields(log.Fields{
+											"error": err,
+										}).Error("Raven gitPush error")
+									}
+									// Prints the current HEAD to verify that all worked well.
+									obj, err := r.CommitObject(commit)
+									fmt.Println("head: ", obj)
+
+									if err != nil {
+										log.WithFields(log.Fields{
+											"obj": obj,
+										}).Error("git show -s")
+									}
+									log.WithFields(log.Fields{
+										"obj": obj,
+									}).Info("git show -s: commit")
+									genericPostWebHook()
+								}
+							}
+						}
+						log.Info("Going to sleep now.")
+						time.Sleep(30 * time.Second)
+					} else {
+						for _, secret := range list.Data["keys"].([]interface{}) {
+
 							log.WithFields(log.Fields{
 								"secret": secret,
-							}).Info("readSealedSecretAndCompare: we already have this secret. Vault did not update")
-						} else {
-							// we need to update the secret.
-							log.WithFields(log.Fields{
-								"SealedSecret": secret,
-								"newBase":      newBase,
-							}).Info("readSealedSecretAndCompare: Found new secret, need to create new sealed secret file")
-							SerializeAndWriteToFile(SealedSecret, newBase)
+							}).Info("Checking secret")
+							//make SealedSecrets
+							SealedSecret, SingleKVFromVault := getKVAndCreateSealedSecret(newConfig.secretEngine, secret.(string), newConfig.token, newConfig.destEnv, newConfig.pemFile)
+
+							//ensure that path exists in order to write to it later.
+							newBase := ensurePathandreturnWritePath(*clonePath, *destEnv, secret.(string))
+							if _, err := os.Stat(newBase); os.IsNotExist(err) {
+								log.WithFields(log.Fields{
+									"SealedSecret": newBase,
+								}).Info("SealedSecret does already exist, need to create YAML")
+								SerializeAndWriteToFile(SealedSecret, newBase)
+							} else if !readSealedSecretAndCompareWithVaultStruct(secret.(string), SingleKVFromVault, newBase, newConfig.secretEngine) {
+								log.WithFields(log.Fields{
+									"secret": secret,
+								}).Info("readSealedSecretAndCompare: we already have this secret. Vault did not update")
+							} else {
+								// we need to update the secret.
+								log.WithFields(log.Fields{
+									"SealedSecret": secret,
+									"newBase":      newBase,
+								}).Info("readSealedSecretAndCompare: Found new secret, need to create new sealed secret file")
+								SerializeAndWriteToFile(SealedSecret, newBase)
+							}
+
 						}
+						//..and push new files if there were any. If there are any ripe secrets, delete.
+						PickedRipeSecrets := PickRipeSecrets(last, list)
+						HarvestRipeSecrets(PickedRipeSecrets, newConfig.clonePath, newConfig.destEnv)
+						gitPush(newConfig.clonePath, newConfig.destEnv, *repoUrl)
+						log.WithFields(log.Fields{
+							"PickedRipeSecrets": PickedRipeSecrets,
+						}).Info("PickedRipeSecrets list")
+
+						// we save last state of previous list.
+						last = list
+
+						// calculate random sleep between 15 and 30 seconds
+						rand.Seed(time.Now().UnixNano())
+						max := 30
+						min := 15
+						sleepTime := rand.Intn(max-min) + min
+
+						//now we sleep randomly
+						log.WithFields(log.Fields{
+							"sleepTime": sleepTime,
+						}).Debug("Going to sleep.")
+						time.Sleep(time.Duration(sleepTime) * time.Second)
+						log.WithFields(log.Fields{
+							"sleepTime": sleepTime,
+						}).Debug("Sleep done.")
 
 					}
-					//..and push new files if there were any. If there are any ripe secrets, delete.
-					PickedRipeSecrets := PickRipeSecrets(last, list)
-					HarvestRipeSecrets(PickedRipeSecrets, newConfig.clonePath, newConfig.destEnv)
-					gitPush(newConfig.clonePath, newConfig.destEnv, *repoUrl)
-					log.WithFields(log.Fields{
-						"PickedRipeSecrets": PickedRipeSecrets,
-					}).Info("PickedRipeSecrets list")
-
-					// we save last state of previous list.
-					last = list
-
-					// calculate random sleep between 15 and 30 seconds
-					rand.Seed(time.Now().UnixNano())
-					max := 30
-					min := 15
-					sleepTime := rand.Intn(max-min) + min
-
-					//now we sleep randomly
-					log.WithFields(log.Fields{
-						"sleepTime": sleepTime,
-					}).Debug("Going to sleep.")
-					time.Sleep(time.Duration(sleepTime) * time.Second)
-					log.WithFields(log.Fields{
-						"sleepTime": sleepTime,
-					}).Debug("Sleep done.")
-
-				} else {
-					log.WithFields(log.Fields{
-						"token": token,
-					}).Warn("Token is invalid, need to update. ")
-					WriteErrorToTerminationLog("[*] token is invalid, someone needs to update this![*]")
-					os.Exit(1)
 				}
 			}
 		} else {
