@@ -8,5 +8,6 @@ ENV CERT_FILE=/mg/secret/ssc/tls.crt \
     SSL_CERT_FILE=/tmp/cert/ca.crt
     
 COPY . /
+COPY files/start /start
 USER 1001
 ENTRYPOINT ["/start"]
