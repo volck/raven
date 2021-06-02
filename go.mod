@@ -1,4 +1,4 @@
-module main
+module github.com/volck/raven 
 
 go 1.16
 
