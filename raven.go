@@ -412,13 +412,13 @@ func getAllKVs(env string, token string) (Secret *api.Secret, err error) {
 
 	client, err := client()
 	if err != nil {
-		fmt.Println("getALLKVs client() failed:", err)
+		log.WithFields(log.Fields{"error": err}).Error("getAllKVs client error")
 	}
 	url := env + "/metadata"
 
 	Secret, err = client.Logical().List(url)
 	if err != nil {
-		fmt.Println("getallKVs client.Logical().List(url) err", err)
+		log.WithFields(log.Fields{"error": err}).Error("getAllKVs list error")
 	}
 	return Secret, err
 }
@@ -431,13 +431,13 @@ func getSingleKV(env string, secretname string) (Secret *api.Secret) {
 	//url := vaultEndPoint + "/v1/" + env + "/data/" + secretname
 	client, err := client()
 	if err != nil {
-		fmt.Println("getsingleKV client err:", err)
+		log.WithFields(log.Fields{"error": err}).Error("getSingleKV client error")
 	}
 	path := fmt.Sprintf("%s/data/%s", env, secretname)
 
 	Secret, err = client.Logical().Read(path)
 	if err != nil {
-		fmt.Println("client.logical.read error:", err)
+		log.WithFields(log.Fields{"error": err}).Error("getSingleKV client read error")
 	}
 	return
 
@@ -445,12 +445,12 @@ func getSingleKV(env string, secretname string) (Secret *api.Secret) {
 func RenewSelfToken(token string, vaultEndpoint string) {
 	client, err := client()
 	if err != nil {
-		fmt.Println("RenewSelfToken client init err:", err)
+		log.WithFields(log.Fields{"error": err}).Error("RenewSelfToken client error")
 	}
 	clientToken, err := client.Auth().Token().RenewSelf(300) // renew for 5 more minutes.
 	fmt.Println(clientToken)
 	if err != nil {
-		fmt.Printf("err, %s \n", err.Error())
+		log.WithFields(log.Fields{"error": err}).Error("client.token.renewself() client error")
 	}
 
 }
@@ -468,7 +468,7 @@ func validateSelftoken(vaultEndPoint string, token string) (valid bool) {
 
 	_, err = client.Auth().Token().LookupSelf()
 	if err != nil {
-		fmt.Println("validateSelftoken: Auth.LookupSelf()  failed: ", err)
+		log.WithFields(log.Fields{"error": err}).Error("validateSelfTokenlookupself failed")
 		valid = false
 		return valid
 	}
@@ -679,7 +679,6 @@ func SerializeAndWriteToFile(SealedSecret *sealedSecretPkg.SealedSecret, fullPat
 */
 
 func readSealedSecretAndCompareWithVaultStruct(secret string, kv *api.Secret, filepointer string, secretEngine string) (NeedUpdate bool) {
-	fmt.Println("readSealedSecretAndCompareWithVaultStruct comparing stuff")
 	NeedUpdate = false
 	VaultTimeStamp := kv.Data["metadata"].(map[string]interface{})["created_time"]
 
@@ -715,7 +714,6 @@ func readSealedSecretAndCompareWithVaultStruct(secret string, kv *api.Secret, fi
 		SealedSecretTime := v["metadata"].(map[interface{}]interface{})["annotations"].(map[interface{}]interface{})["created_time"]
 		SealedSecretSource := v["metadata"].(map[interface{}]interface{})["annotations"].(map[interface{}]interface{})["source"]
 		if VaultTimeStamp == SealedSecretTime || SealedSecretSource != secretEngine {
-			fmt.Println("are we ever going here? VaultTimeStamp == SealedSecretTime || SealedSecretSource != secretEngine")
 			log.WithFields(log.Fields{
 				"VaultTimeStamp":     VaultTimeStamp,
 				"SealedSecretTime":   SealedSecretTime,
@@ -935,8 +933,9 @@ func main() {
 						base := filepath.Join(newConfig.clonePath, "declarative", newConfig.destEnv, "sealedsecrets")
 						files, err := ioutil.ReadDir(base)
 						if err != nil {
-							fmt.Println(err)
+							log.WithFields(log.Fields{"error": err,}).Error("ioutil.ReadDir() error")
 						}
+
 						r, err := git.PlainOpen(newConfig.clonePath)
 						if err != nil {
 							log.WithFields(log.Fields{
