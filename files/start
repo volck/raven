@@ -4,4 +4,4 @@
 mkdir -p ${CLONE_PATH}
 
 # Execute sealed secret generator
-/raven -se=${SECRET_ENGINE} -cert=${CERT_FILE} -token=${VAULT_TOKEN} -clonepath=${CLONE_PATH} -dest=${DEST_ENV} -repourl=${REPO_URL} -vaultendpoint=${vaultendpoint}
+/raven -se=${SECRET_ENGINE} -cert=${CERT_FILE} -token=${VAULT_TOKEN} -clonepath=${CLONE_PATH} -dest=${DEST_ENV} -repourl=${REPO_URL} -vaultendpoint=${VAULTENDPOINT}
