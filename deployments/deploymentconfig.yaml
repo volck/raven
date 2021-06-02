@@ -1,0 +1,74 @@
+apiVersion: apps.openshift.io/v1
+kind: DeploymentConfig
+metadata:
+  annotations:
+  labels:
+    app: raven 
+  name: raven 
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5
+  selector:
+    app: raven 
+  strategy:
+    activeDeadlineSeconds: 1200
+    resources: {}
+    rollingParams:
+      intervalSeconds: 1
+      maxSurge: 25%
+      maxUnavailable: 25%
+      timeoutSeconds: 600
+      updatePeriodSeconds: 1
+    type: Rolling
+  template:
+    metadata:
+      labels:
+        app: raven 
+      name: raven 
+    spec:
+      containers:
+      - env:
+        - name: VAULT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              key: token
+              name: vault-ssg-dev-token
+        - name: REPO_URL
+          value: ssh://git@example.com
+        - name: SECRET_ENGINE
+          value: mykv 
+        - name: DEST_ENV
+          value: myenv 
+        - name: CLONE_PATH
+          value: /tmp/clone
+        image: image-registry.openshift-
+        imagePullPolicy: IfNotPresent
+        name: raven 
+        resources: {}
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /secret/ssc
+          name: ssc
+        - mountPath: /secret
+          name: sshprivatekey
+          readOnly: true
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+      volumes:
+      - name: sshprivatekey
+        secret:
+          defaultMode: 420
+          items:
+          - key: ssh-privatekey
+            path: sshKey
+          secretName: sshprivatekey
+      - name: ssc
+        secret:
+          defaultMode: 420
+          secretName: ssc
+  triggers:
+  - type: ConfigChange
