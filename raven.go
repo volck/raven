@@ -94,7 +94,7 @@ func PickRipeSecrets(PreviousKV *api.Secret, NewKV *api.Secret) (RipeSecrets []s
 	log.WithFields(log.Fields{
 		"previousKeys": PreviousKV.Data["keys"],
 		"newKV":        NewKV.Data["keys"],
-	}).Info("PickRipeSecrets is starting to compare lists")
+	}).Debug("PickRipeSecrets is starting to compare lists")
 
 	if PreviousKV.Data["keys"] == nil || NewKV.Data["keys"] == nil {
 		// we assume this is our first run so we do not know difference yet.
@@ -112,9 +112,8 @@ func PickRipeSecrets(PreviousKV *api.Secret, NewKV *api.Secret) (RipeSecrets []s
 		for _, v := range PreviousKV.Data["keys"].([]interface{}) {
 			isAlive := Alive(NewKV.Data["keys"].([]interface{}), v.(string))
 			if !isAlive {
-				log.WithFields(log.Fields{
-					"PreviousKV.Data": PreviousKV.Data,
-				}).Info("PickRipeSecrets: We have found a ripe secret. adding it to list of ripesecrets now.")
+				log.WithFields(log.Fields{"PreviousKV.Data": PreviousKV.Data}).Debug("PickRipeSecrets: We have found a ripe secret. adding it to list of ripesecrets now.")
+				log.WithFields(log.Fields{"RipeSecret": v.(string)}).Info("PickRipeSecrets: We have found a ripe secret. adding it to list of ripesecrets now.")
 				RipeSecrets = append(RipeSecrets, v.(string))
 				log.WithFields(log.Fields{"RipeSecret": RipeSecrets}).Debug("PickRipeSecrets final list of ripe secrets")
 			}
@@ -149,7 +148,7 @@ func HarvestRipeSecrets(RipeSecrets []string, clonePath string, destEnv string) 
 			if err != nil {
 				log.WithFields(log.Fields{"err": err}).Error("HarvestRipeSecrets worktree.Remove failed")
 			}
-			log.WithFields(log.Fields{"path": newbase, "ripeSecret": RipeSecrets[ripe]}).Info("HarvestRipeSecrets found ripe secret. marked for deletion")
+			log.WithFields(log.Fields{"ripeSecret": RipeSecrets[ripe]}).Info("HarvestRipeSecrets found ripe secret. marked for deletion")
 		}
 		status, err := w.Status()
 
@@ -197,7 +196,6 @@ func HarvestRipeSecrets(RipeSecrets []string, clonePath string, destEnv string) 
 }
 
 func setSSHConfig() (auth transport.AuthMethod) {
-
 	sshKey, err := ioutil.ReadFile("/secret/sshKey")
 	if err != nil {
 		log.WithFields(log.Fields{
@@ -244,18 +242,18 @@ func GitClone(LocalPath string, url string) {
 		}
 	}
 	// we do the clone
-	log.WithFields(log.Fields{}).Info("Raven GitClone")
+	log.WithFields(log.Fields{}).Debug("Raven GitClone")
 
 	remote, err := git.PlainClone(LocalPath, false, cloneOptions)
 	if err != nil {
-		log.WithFields(log.Fields{"error": err}).Error("Raven GitClone error")
+		log.WithFields(log.Fields{"error": err}).Debug("Raven GitClone error")
 
 	} else {
 		head, err := remote.Head()
 		if err != nil {
 			log.WithFields(log.Fields{"head": head, "error": err}).Warn("Gitclone Remote.head()")
 		}
-		log.WithFields(log.Fields{"head": head}).Info("Raven GitClone complete")
+		log.WithFields(log.Fields{"head": head}).Debug("Raven GitClone complete")
 	}
 }
 
@@ -273,16 +271,16 @@ func gitPush(LocalPath string, env string, url string) {
 	}
 
 	// Pull the latest changes from the origin remote and merge into the current branch
-	log.Info("GitPush pulling")
+	log.Debug("GitPush pulling")
 	if strings.HasPrefix(url, "ssh:") {
 		err = w.Pull(&git.PullOptions{RemoteName: "origin", Auth: setSSHConfig()})
 		if err != nil {
-			log.WithFields(log.Fields{"error": err}).Error("Raven gitPush:Pull error")
+			log.WithFields(log.Fields{"error": err}).Debug("Raven gitPush:Pull error")
 		}
 	} else {
 		err = w.Pull(&git.PullOptions{RemoteName: "origin"})
 		if err != nil {
-			log.WithFields(log.Fields{"error": err}).Error("Raven gitPush:Pull error")
+			log.WithFields(log.Fields{"error": err}).Debug("Raven gitPush:Pull error")
 		}
 	}
 
@@ -839,17 +837,17 @@ func main() {
 					} else {
 						for _, secret := range list.Data["keys"].([]interface{}) {
 
-							log.WithFields(log.Fields{"secret": secret}).Info("Checking secret")
+							log.WithFields(log.Fields{"secret": secret}).Debug("Checking secret")
 							//make SealedSecrets
 							SealedSecret, SingleKVFromVault := getKVAndCreateSealedSecret(newConfig.secretEngine, secret.(string), newConfig.token, newConfig.destEnv, newConfig.pemFile)
 
 							//ensure that path exists in order to write to it later.
 							newBase := ensurePathandreturnWritePath(*clonePath, *destEnv, secret.(string))
 							if _, err := os.Stat(newBase); os.IsNotExist(err) {
-								log.WithFields(log.Fields{"SealedSecret": newBase}).Info("SealedSecret does already exist, need to create YAML")
+								log.WithFields(log.Fields{"SealedSecret": secret.(string)}).Info(`Creating Sealed Secret`)
 								SerializeAndWriteToFile(SealedSecret, newBase)
 							} else if !readSealedSecretAndCompareWithVaultStruct(secret.(string), SingleKVFromVault, newBase, newConfig.secretEngine) {
-								log.WithFields(log.Fields{"secret": secret}).Info("readSealedSecretAndCompare: we already have this secret. Vault did not update")
+								log.WithFields(log.Fields{"secret": secret}).Debug("readSealedSecretAndCompare: we already have this secret. Vault did not update")
 							} else {
 								// we need to update the secret.
 								log.WithFields(log.Fields{"SealedSecret": secret, "newBase": newBase}).Info("readSealedSecretAndCompare: Found new secret, need to create new sealed secret file")
@@ -861,7 +859,7 @@ func main() {
 						PickedRipeSecrets := PickRipeSecrets(last, list)
 						HarvestRipeSecrets(PickedRipeSecrets, newConfig.clonePath, newConfig.destEnv)
 						gitPush(newConfig.clonePath, newConfig.destEnv, *repoUrl)
-						log.WithFields(log.Fields{"PickedRipeSecrets": PickedRipeSecrets}).Info("PickedRipeSecrets list")
+						log.WithFields(log.Fields{"PickedRipeSecrets": PickedRipeSecrets}).Debug("PickedRipeSecrets list")
 
 						// we save last state of previous list.
 						last = list
@@ -873,15 +871,15 @@ func main() {
 						sleepTime := rand.Intn(max-min) + min
 
 						//now we sleep randomly
-						log.WithFields(log.Fields{"sleepTime": sleepTime,}).Debug("Going to sleep.")
+						log.WithFields(log.Fields{"sleepTime": sleepTime}).Debug("Going to sleep.")
 						time.Sleep(time.Duration(sleepTime) * time.Second)
-						log.WithFields(log.Fields{"sleepTime": sleepTime,}).Debug("Sleep done.")
+						log.WithFields(log.Fields{"sleepTime": sleepTime}).Debug("Sleep done.")
 
 					}
 				}
 			}
 		} else {
-			log.WithFields(log.Fields{"token": token,}).Warn("Token is invalid, need to update. ")
+			log.WithFields(log.Fields{"token": token}).Warn("Token is invalid, need to update. ")
 			WriteErrorToTerminationLog("[*] token is invalid, someone needs to update this![*]")
 			os.Exit(1)
 		}
