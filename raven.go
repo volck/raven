@@ -55,8 +55,21 @@ func initLogging() {
 	// Can be any io.Writer, see below for File example
 	log.SetOutput(os.Stdout)
 
-	// Only log the warning severity or above.
-	log.SetLevel(log.WarnLevel)
+	loglevel := os.Getenv("LOGLEVEL")
+
+	switch {
+	case loglevel == "INFO":
+		log.SetLevel(log.InfoLevel)
+		log.Infof("Loglevel is: %v", loglevel)
+	case loglevel == "DEBUG":
+		log.SetLevel(log.DebugLevel)
+		log.Infof("Loglevel is: %v", loglevel)
+	default:
+		log.SetLevel(log.InfoLevel)
+		log.Info("No LOGLEVEL specified. Defaulting to Info")
+
+	}
+
 }
 
 /*
@@ -716,6 +729,7 @@ func handleRequests() {
 }
 
 func main() {
+	initLogging()
 	token := flag.String("token", "", "token used for to grab secrets from Vault")
 	secretEngine := flag.String("se", "", "specifies secret engine to grab secrets from in Vault")
 	vaultEndpoint := flag.String("vaultendpoint", "", "URL to the Vault installation.")
@@ -741,7 +755,7 @@ func main() {
 		newConfig.pemFile = *pemFile
 		newConfig.clonePath = *clonePath
 		newConfig.repoUrl = *repoUrl
-		log.WithFields(log.Fields{"config": newConfig}).Debug("Setting  newConfig variables. preparing to run. ")
+		log.WithFields(log.Fields{"config": newConfig}).Debug("Setting newConfig variables. preparing to run. ")
 		if validateSelftoken(*vaultEndpoint, *token) {
 
 			// start webserver
