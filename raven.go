@@ -455,45 +455,52 @@ func createK8sSecret(name string, Namespace string, sourceenv string, dataFields
 		return err == nil
 	}
 	Annotations["source"] = sourceenv
+	if dataFields.Data["data"] == nil {
+		log.WithFields(log.Fields{"secret": name}).Info("secret has no data defined in body. skipping it.")
+	} else {
+		for k, v := range dataFields.Data["data"].(map[string]interface{}) {
+			log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["data"]}).Debug("createK8sSecret: dataFields.Data[data] iterate")
 
-	for k, v := range dataFields.Data["data"].(map[string]interface{}) {
-		log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["data"]}).Debug("createK8sSecret: dataFields.Data[data] iterate ")
-
-		if strings.HasPrefix(v.(string), "base64:") {
-			stringSplit := strings.Split(v.(string), ":")
-			if isbase64(stringSplit[1]) {
-				data[k], _ = base64.StdEncoding.DecodeString(stringSplit[1])
-				log.WithFields(log.Fields{"key": k, "value": v, "base64EncodedString": stringSplit[1], "datafields": dataFields.Data["data"]}).Debug("createK8sSecret: dataFields.Data[data] found base64-encoding")
+			if strings.HasPrefix(v.(string), "base64:") {
+				stringSplit := strings.Split(v.(string), ":")
+				if isbase64(stringSplit[1]) {
+					data[k], _ = base64.StdEncoding.DecodeString(stringSplit[1])
+					log.WithFields(log.Fields{"key": k, "value": v, "base64EncodedString": stringSplit[1], "datafields": dataFields.Data["data"]}).Debug("createK8sSecret: dataFields.Data[data] found base64-encoding")
+				}
 			}
-		}
-		if k == "raven/description" {
-			Annotations[k] = v.(string)
-			log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["data"]}).Debug("createK8sSecret: dataFields.Data[data] found raven/description")
-		} else {
-			stringdata[k] = v.(string)
-			log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["data"]}).Debug("createK8sSecret: dataFields.Data[data] catch all. putting value in stringdata[]")
-		}
+			if k == "raven/description" {
+				Annotations[k] = v.(string)
+				log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["data"]}).Debug("createK8sSecret: dataFields.Data[data] found raven/description")
+			} else {
+				stringdata[k] = v.(string)
+				log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["data"]}).Debug("createK8sSecret: dataFields.Data[data] catch all. putting value in stringdata[]")
+			}
 
+		}
 	}
-	for k, v := range dataFields.Data["metadata"].(map[string]interface{}) {
-		// we handle descriptions for KVs here, in order to show which secrets are handled by which SSG.
-		switch v.(type) {
-		case float64:
+	if dataFields.Data["metadata"] == nil {
+		log.WithFields(log.Fields{"secret": name}).Info("secret has no metadata defined in body. skipping it.")
+	} else {
+		for k, v := range dataFields.Data["metadata"].(map[string]interface{}) {
+			// we handle descriptions for KVs here, in order to show which secrets are handled by which SSG.
+			switch v.(type) {
+			case float64:
 
-			float64value := reflect.ValueOf(v)
-			float64convert := strconv.FormatFloat(float64value.Float(), 'f', -1, 64)
-			Annotations[k] = float64convert
-			log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["metadata"]}).Debug("createK8sSecret: dataFields.Data[metadata] case match float64 ")
-		case string:
-			Annotations[k] = v.(string)
-			log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["metadata"]}).Debug("createK8sSecret: dataFields.Data[metadata] case match string ")
-		case bool:
-			booleanvalue := reflect.ValueOf(v)
-			boolconvert := strconv.FormatBool(booleanvalue.Bool())
-			Annotations[k] = boolconvert
-			log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["metadata"]}).Debug("createK8sSecret: dataFields.Data[metadata] case match bool ")
+				float64value := reflect.ValueOf(v)
+				float64convert := strconv.FormatFloat(float64value.Float(), 'f', -1, 64)
+				Annotations[k] = float64convert
+				log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["metadata"]}).Debug("createK8sSecret: dataFields.Data[metadata] case match float64 ")
+			case string:
+				Annotations[k] = v.(string)
+				log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["metadata"]}).Debug("createK8sSecret: dataFields.Data[metadata] case match string ")
+			case bool:
+				booleanvalue := reflect.ValueOf(v)
+				boolconvert := strconv.FormatBool(booleanvalue.Bool())
+				Annotations[k] = boolconvert
+				log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["metadata"]}).Debug("createK8sSecret: dataFields.Data[metadata] case match bool ")
+			}
+
 		}
-
 	}
 
 	secret = v1.Secret{
