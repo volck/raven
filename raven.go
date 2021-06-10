@@ -780,7 +780,7 @@ func main() {
 			last := &api.Secret{}
 			for {
 				if validateSelftoken(*vaultEndpoint, *token) {
-					log.WithFields(log.Fields{}).Info("Validated Token: grabbing list of secrets")
+					log.WithFields(log.Fields{}).Debug("Validated Token: grabbing list of secrets")
 
 					var list, err = getAllKVs(newConfig.secretEngine, newConfig.token)
 					if err != nil {
