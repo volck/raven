@@ -38,13 +38,14 @@ import (
 )
 
 type config struct {
-	vaultEndpoint string
-	secretEngine  string
-	token         string
-	destEnv       string
-	pemFile       string
-	clonePath     string
-	repoUrl       string
+	vaultEndpoint     string
+	secretEngine      string
+	token             string
+	destEnv           string
+	pemFile           string
+	clonePath         string
+	repoUrl           string
+	DocumentationKeys []string
 }
 
 func initLogging() {
@@ -72,9 +73,40 @@ func initLogging() {
 
 }
 
+/*/
+
+isDocumentationKey parses documentationKeys list, returns true if key exists.
+*/
+func isDocumentationKey(DocumentationKeys []string, key string) bool {
+	for _, DocumentationKey := range DocumentationKeys {
+		if DocumentationKey == key {
+			log.WithFields(log.Fields{"key": key, "DocumentationKeys": DocumentationKeys}).Debug("IsdocumentationKey found key")
+			return true
+		}
+	}
+	return false
+}
+
 /*
-We assume program crashed and we need to tell Kubernetes this:
-https://kubernetes.io/docs/tasks/debug-application-cluster/determine-reason-pod-failure/
+initAdditionalKeys looks for DOCUMENTATION_KEYS in order to enrich secret object with annotation down the line.
+*/
+
+func initAdditionalKeys() (DocumentationKeys []string) {
+	keys := os.Getenv("DOCUMENTATION_KEYS")
+	DocumentationKeys = strings.Split(keys, ",")
+
+	if !isDocumentationKey(DocumentationKeys, "raven/description") {
+		DocumentationKeys = append(DocumentationKeys, "raven/description")
+		log.WithFields(log.Fields{"DocumentationKeys": DocumentationKeys}).Info("No documentation_KEYS found, setting raven/description")
+
+	}
+
+	return
+}
+
+/*
+   We assume program crashed and we need to tell Kubernetes this:
+   https://kubernetes.io/docs/tasks/debug-application-cluster/determine-reason-pod-failure/
 */
 
 func WriteErrorToTerminationLog(errormsg string) {
@@ -86,7 +118,7 @@ func WriteErrorToTerminationLog(errormsg string) {
 }
 
 /*
-Alive checks for differences between two arrays
+   Alive checks for differences between two arrays
 */
 
 func Alive(slice []interface{}, val string) bool {
@@ -460,7 +492,6 @@ func createK8sSecret(name string, Namespace string, sourceenv string, dataFields
 	} else {
 		for k, v := range dataFields.Data["data"].(map[string]interface{}) {
 			log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["data"]}).Debug("createK8sSecret: dataFields.Data[data] iterate")
-
 			if strings.HasPrefix(v.(string), "base64:") {
 				stringSplit := strings.Split(v.(string), ":")
 				if isbase64(stringSplit[1]) {
@@ -468,9 +499,10 @@ func createK8sSecret(name string, Namespace string, sourceenv string, dataFields
 					log.WithFields(log.Fields{"key": k, "value": v, "base64EncodedString": stringSplit[1], "datafields": dataFields.Data["data"]}).Debug("createK8sSecret: dataFields.Data[data] found base64-encoding")
 				}
 			}
-			if k == "raven/description" {
+			if isDocumentationKey(newConfig.DocumentationKeys, k) {
 				Annotations[k] = v.(string)
-				log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["data"]}).Debug("createK8sSecret: dataFields.Data[data] found raven/description")
+
+				log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["data"], "Annotations": Annotations}).Debug("createK8sSecret: dataFields.Data[data] found description field")
 			} else {
 				stringdata[k] = v.(string)
 				log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["data"]}).Debug("createK8sSecret: dataFields.Data[data] catch all. putting value in stringdata[]")
@@ -651,13 +683,14 @@ func ensurePathandreturnWritePath(clonePath string, destEnv string, secretName s
 }
 
 var newConfig = config{
-	vaultEndpoint: "",
-	secretEngine:  "",
-	token:         "",
-	destEnv:       "",
-	pemFile:       "",
-	clonePath:     "",
-	repoUrl:       "",
+	vaultEndpoint:     "",
+	secretEngine:      "",
+	token:             "",
+	destEnv:           "",
+	pemFile:           "",
+	clonePath:         "",
+	repoUrl:           "",
+	DocumentationKeys: initAdditionalKeys(),
 }
 
 /*
@@ -762,6 +795,8 @@ func main() {
 		newConfig.pemFile = *pemFile
 		newConfig.clonePath = *clonePath
 		newConfig.repoUrl = *repoUrl
+		newConfig.DocumentationKeys = initAdditionalKeys() // we make sure that if the env here is set we can allow multiple descriptional fields in annotations.
+
 		log.WithFields(log.Fields{"config": newConfig}).Debug("Setting newConfig variables. preparing to run. ")
 		if validateSelftoken(*vaultEndpoint, *token) {
 
