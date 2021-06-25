@@ -507,16 +507,13 @@ func createK8sSecret(name string, Namespace string, sourceenv string, dataFields
 				} else {
 					log.WithFields(log.Fields{"key": k, "value": v,}).Warn ("key is not valid BASE64")
 				}
-			}
-			if isDocumentationKey(newConfig.DocumentationKeys, k) {
+			} else if isDocumentationKey(newConfig.DocumentationKeys, k) {
 				Annotations[k] = v.(string)
-
 				log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["data"], "Annotations": Annotations}).Debug("createK8sSecret: dataFields.Data[data] found description field")
 			} else {
 				stringdata[k] = v.(string)
 				log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["data"]}).Debug("createK8sSecret: dataFields.Data[data] catch all. putting value in stringdata[]")
 			}
-
 		}
 	}
 	if dataFields.Data["metadata"] == nil {
@@ -559,7 +556,7 @@ func createK8sSecret(name string, Namespace string, sourceenv string, dataFields
 		Type:       "Opaque",
 	}
 
-	log.WithFields(log.Fields{"typeMeta": secret.TypeMeta, "objectMeta": secret.ObjectMeta, "data": data, "stringData": stringdata, "secret": secret}).Debug("createK8sSecret: made k8s secret object")
+	log.WithFields(log.Fields{"typeMeta": secret.TypeMeta, "objectMeta": secret.ObjectMeta, "data": data, "stringData": stringdata, "secret": secret}).Info("createK8sSecret: made k8s secret object")
 	return
 }
 
