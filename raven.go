@@ -9,25 +9,28 @@ import (
 	"encoding/pem"
 	"flag"
 	"fmt"
+	"net"
+
+	"io/ioutil"
+	"math/rand"
+	"net/http"
+	"os"
+
 	sealedSecretPkg "github.com/bitnami-labs/sealed-secrets/pkg/apis/sealed-secrets/v1alpha1"
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
 	"github.com/hashicorp/vault/api"
 	"golang.org/x/crypto/ssh"
-	"net"
+
 	//"gopkg.in/src-d/go-billy.v4/memfs"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	log "github.com/sirupsen/logrus"
 	yaml "gopkg.in/yaml.v2"
-	"io/ioutil"
 	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	serializer "k8s.io/apimachinery/pkg/runtime/serializer"
 	k8sJson "k8s.io/apimachinery/pkg/runtime/serializer/json"
-	"math/rand"
-	"net/http"
-	"os"
 	//"os/exec"
 	"path/filepath"
 	"reflect"
@@ -48,7 +51,7 @@ type config struct {
 	DocumentationKeys []string
 }
 
-func initLogging() {
+func init() {
 	// Log as JSON instead of the default ASCII formatter.
 	log.SetFormatter(&log.JSONFormatter{})
 
@@ -484,7 +487,10 @@ func createK8sSecret(name string, Namespace string, sourceenv string, dataFields
 	data := make(map[string][]byte)
 	isbase64 := func(s string) bool {
 		_, err := base64.StdEncoding.DecodeString(s)
-		return err == nil
+		if err != nil {
+			return false
+		}
+		return true
 	}
 	Annotations["source"] = sourceenv
 	if dataFields.Data["data"] == nil {
@@ -496,7 +502,10 @@ func createK8sSecret(name string, Namespace string, sourceenv string, dataFields
 				stringSplit := strings.Split(v.(string), ":")
 				if isbase64(stringSplit[1]) {
 					data[k], _ = base64.StdEncoding.DecodeString(stringSplit[1])
-					log.WithFields(log.Fields{"key": k, "value": v, "base64EncodedString": stringSplit[1], "datafields": dataFields.Data["data"]}).Debug("createK8sSecret: dataFields.Data[data] found base64-encoding")
+
+					log.WithFields(log.Fields{"key": k, "value": v, "split": stringSplit, "datafields": dataFields.Data["data"]}).Debug("createK8sSecret: dataFields.Data[data] found base64-encoding")
+				} else {
+					log.WithFields(log.Fields{"key": k, "value": v,}).Warn ("key is not valid BASE64")
 				}
 			}
 			if isDocumentationKey(newConfig.DocumentationKeys, k) {
@@ -769,7 +778,6 @@ func handleRequests() {
 }
 
 func main() {
-	initLogging()
 	token := flag.String("token", "", "token used for to grab secrets from Vault")
 	secretEngine := flag.String("se", "", "specifies secret engine to grab secrets from in Vault")
 	vaultEndpoint := flag.String("vaultendpoint", "", "URL to the Vault installation.")
