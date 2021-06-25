@@ -48,7 +48,7 @@ type config struct {
 	DocumentationKeys []string
 }
 
-func initLogging() {
+func init() {
 	// Log as JSON instead of the default ASCII formatter.
 	log.SetFormatter(&log.JSONFormatter{})
 
@@ -769,7 +769,6 @@ func handleRequests() {
 }
 
 func main() {
-	initLogging()
 	token := flag.String("token", "", "token used for to grab secrets from Vault")
 	secretEngine := flag.String("se", "", "specifies secret engine to grab secrets from in Vault")
 	vaultEndpoint := flag.String("vaultendpoint", "", "URL to the Vault installation.")
