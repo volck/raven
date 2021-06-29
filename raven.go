@@ -216,7 +216,7 @@ func createK8sSecret(name string, Namespace string, sourceenv string, dataFields
 		Type:       "Opaque",
 	}
 
-	log.WithFields(log.Fields{"typeMeta": secret.TypeMeta, "objectMeta": secret.ObjectMeta, "data": data, "stringData": stringdata, "secret": secret}).Info("createK8sSecret: made k8s secret object")
+	log.WithFields(log.Fields{"typeMeta": secret.TypeMeta, "objectMeta": secret.ObjectMeta, "data": data, "stringData": stringdata, "secret": secret}).Debug("createK8sSecret: made k8s secret object")
 	return
 }
 
