@@ -8,12 +8,17 @@ import (
 )
 
 func forceRefresh(wg *sync.WaitGroup) {
-	var list, err = getAllKVs(newConfig.secretEngine, newConfig.token)
+	client, err := client()
 	if err != nil {
-		log.WithFields(log.Fields{"list": list, "error": err.Error()}).Warn("forceRefresh().getAllKVs failed")
+		log.WithFields(log.Fields{"error": err}).Fatal("client not initialized")
+
+	}
+	var list, errorHere = getAllKVs(client, newConfig.secretEngine, newConfig.token)
+	if errorHere != nil {
+		log.WithFields(log.Fields{"list": list, "error": errorHere.Error()}).Warn("forceRefresh().getAllKVs failed")
 	}
 	for _, secret := range list.Data["Keys"].([]string) {
-		SealedSecret, _ := getKVAndCreateSealedSecret(newConfig.secretEngine, secret, newConfig.token, newConfig.destEnv, newConfig.pemFile)
+		SealedSecret, _ := getKVAndCreateSealedSecret(client,newConfig.secretEngine, secret, newConfig.token, newConfig.destEnv, newConfig.pemFile)
 		newBase := ensurePathandreturnWritePath(newConfig.clonePath, newConfig.destEnv, secret)
 		SerializeAndWriteToFile(SealedSecret, newBase)
 		log.WithFields(log.Fields{"secret": secret, "newBase": newBase}).Info("forceRefresh() rewrote secret")
