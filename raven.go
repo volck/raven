@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"flag"
 	"fmt"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"io/ioutil"
 	"math/rand"
@@ -21,7 +22,6 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	log "github.com/sirupsen/logrus"
 	"k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type config struct {
@@ -260,7 +260,12 @@ func main() {
 		newConfig.DocumentationKeys = initAdditionalKeys() // we make sure that if the env here is set we can allow multiple descriptional fields in annotations.
 
 		log.WithFields(log.Fields{"config": newConfig}).Debug("Setting newConfig variables. preparing to run. ")
-		if validateSelftoken(*vaultEndpoint, *token) {
+		client, err := client()
+		if err != nil {
+			log.WithFields(log.Fields{"config": newConfig}).Fatal("failed to initialize client")
+
+		}
+		if validateSelftoken(client) {
 
 			// start webserver
 			go handleRequests()
@@ -275,11 +280,14 @@ func main() {
 
 			GitClone(*clonePath, *repoUrl)
 			last := &api.Secret{}
-			for {
-				if validateSelftoken(*vaultEndpoint, *token) {
-					log.WithFields(log.Fields{}).Debug("Validated Token: grabbing list of secrets")
+			if err != nil {
+				log.WithFields(log.Fields{"error": err}).Error("client not initialized")
 
-					var list, err = getAllKVs(newConfig.secretEngine, newConfig.token)
+			}
+			for {
+				if validateSelftoken(client) {
+					log.WithFields(log.Fields{}).Debug("Validated Token: grabbing list of secrets")
+					var list, err = getAllKVs(client, newConfig.secretEngine, newConfig.token)
 					if err != nil {
 						log.WithFields(log.Fields{"error": err}).Error("getAllKVs list error")
 					}
@@ -357,7 +365,7 @@ func main() {
 
 							log.WithFields(log.Fields{"secret": secret}).Debug("Checking secret")
 							//make SealedSecrets
-							SealedSecret, SingleKVFromVault := getKVAndCreateSealedSecret(newConfig.secretEngine, secret.(string), newConfig.token, newConfig.destEnv, newConfig.pemFile)
+							SealedSecret, SingleKVFromVault := getKVAndCreateSealedSecret(client, newConfig.secretEngine, secret.(string), newConfig.token, newConfig.destEnv, newConfig.pemFile)
 
 							//ensure that path exists in order to write to it later.
 							newBase := ensurePathandreturnWritePath(*clonePath, *destEnv, secret.(string))
