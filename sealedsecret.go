@@ -67,7 +67,6 @@ func createSealedSecret(publickeyPath string, k8ssecret *v1.Secret) (sealedSecre
 	if err != nil {
 		log.WithFields(log.Fields{"publickeyPath": publickeyPath, "error": err}).Fatal("createSealedSecret.ioutil.ReadFile: Cannot read publickeyPath")
 	}
-
 	block, _ := pem.Decode([]byte(read))
 	if block == nil {
 		log.WithFields(log.Fields{
