@@ -36,8 +36,8 @@ getKVAndCreateSealedSecret combines several "maker-methods":
 * return KV object in order to compare later.
 
 */
-func getKVAndCreateSealedSecret(secretEngine string, secretName string, token string, destEnv string, pemFile string) (SealedSecret *sealedSecretPkg.SealedSecret, SingleKVFromVault *api.Secret) {
-	SingleKVFromVault = getSingleKV(secretEngine, secretName)
+func getKVAndCreateSealedSecret(client *api.Client,secretEngine string, secretName string, token string, destEnv string, pemFile string) (SealedSecret *sealedSecretPkg.SealedSecret, SingleKVFromVault *api.Secret) {
+	SingleKVFromVault = getSingleKV(client,secretEngine, secretName)
 	log.WithFields(log.Fields{"SingleKVFromVault": SingleKVFromVault}).Debug("getKVAndCreateSealedSecret.SingleKVFromVault")
 	k8sSecret := createK8sSecret(secretName, destEnv, secretEngine, SingleKVFromVault)
 	log.WithFields(log.Fields{"k8sSecret": k8sSecret}).Debug("getKVAndCreateSealedSecret.k8sSecret")
@@ -88,12 +88,7 @@ getallKvs parameters:
 enviroment(i.e qa??, dev??)
 */
 
-func getAllKVs(env string, token string) (Secret *api.Secret, err error) {
-
-	client, err := client()
-	if err != nil {
-		log.WithFields(log.Fields{"error": err}).Error("getAllKVs client error")
-	}
+func getAllKVs(client *api.Client,env string, token string) (Secret *api.Secret, err error) {
 	url := env + "/metadata"
 
 	Secret, err = client.Logical().List(url)
@@ -107,15 +102,12 @@ func getAllKVs(env string, token string) (Secret *api.Secret, err error) {
 getsingleKV() used to iterate struct from getAllKVs(), takes secretname as input, returns struct for single secret. Requires uniform data.
 */
 
-func getSingleKV(env string, secretname string) (Secret *api.Secret) {
+func getSingleKV(client *api.Client,env string, secretname string) (Secret *api.Secret) {
 	//url := vaultEndPoint + "/v1/" + env + "/data/" + secretname
-	client, err := client()
-	if err != nil {
-		log.WithFields(log.Fields{"error": err}).Error("getSingleKV client error")
-	}
+
 	path := fmt.Sprintf("%s/data/%s", env, secretname)
 
-	Secret, err = client.Logical().Read(path)
+	Secret, err := client.Logical().Read(path)
 	if err != nil {
 		log.WithFields(log.Fields{"error": err}).Error("getSingleKV client read error")
 	}
@@ -139,14 +131,9 @@ func RenewSelfToken(token string, vaultEndpoint string) {
 returns false if tokens has errors or is invalid.
 */
 
-func validateSelftoken(vaultEndPoint string, token string) (valid bool) {
+func validateSelftoken(client *api.Client) (valid bool) {
 
-	client, err := client()
-	if err != nil {
-		fmt.Printf("client.ValidateSelfToken() failed: %s \n ", err)
-	}
-
-	_, err = client.Auth().Token().LookupSelf()
+	_, err := client.Auth().Token().LookupSelf()
 	if err != nil {
 		log.WithFields(log.Fields{"error": err}).Error("validateSelfTokenlookupself failed")
 		valid = false
