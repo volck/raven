@@ -169,7 +169,7 @@ func TestGetKVAndCreateNormalSealedSecret(t *testing.T) {
 	secretEngine := "kv"
 	secretName := "secret"
 	destEnv := "kv"
-	pemFile := `ntcert.crt`
+	pemFile := `cert.crt`
 
 	SingleKVFromVault := getSingleKV(client, secretEngine, secretName)
 	k8sSecret := createK8sSecret(secretName, destEnv, secretEngine, SingleKVFromVault)
