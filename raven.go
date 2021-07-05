@@ -24,17 +24,6 @@ import (
 	"k8s.io/api/core/v1"
 )
 
-type config struct {
-	vaultEndpoint     string
-	secretEngine      string
-	token             string
-	destEnv           string
-	pemFile           string
-	clonePath         string
-	repoUrl           string
-	DocumentationKeys []string
-}
-
 func init() {
 	// Log as JSON instead of the default ASCII formatter.
 	log.SetFormatter(&log.JSONFormatter{})
@@ -126,7 +115,9 @@ createK8sSecret generates k8s secrets based on inputs:
 returns v1.Secret for consumption by SealedSecret
 */
 
-func createK8sSecret(name string, Namespace string, sourceenv string, dataFields *api.Secret) (secret v1.Secret) {
+func createK8sSecret(name string, config config, dataFields *api.Secret) (secret v1.Secret) {
+
+
 	Annotations := make(map[string]string)
 	for k, v := range dataFields.Data["metadata"].(map[string]interface{}) {
 		switch v.(type) {
@@ -152,7 +143,7 @@ func createK8sSecret(name string, Namespace string, sourceenv string, dataFields
 		}
 		return true
 	}
-	Annotations["source"] = sourceenv
+	Annotations["source"] = config.secretEngine
 	if dataFields.Data["data"] == nil {
 		log.WithFields(log.Fields{"secret": name}).Info("secret has no data defined in body. skipping it.")
 	} else {
@@ -208,7 +199,7 @@ func createK8sSecret(name string, Namespace string, sourceenv string, dataFields
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        name,
-			Namespace:   Namespace,
+			Namespace:   config.destEnv,
 			Annotations: Annotations,
 		},
 		Data:       data,
