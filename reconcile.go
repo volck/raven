@@ -18,12 +18,11 @@ import (
 HarvestRipeSecrets() checks local files based on RipeSecrets returned from PickRipeSecrets() and marks them for deletion.
 
 */
-
-func HarvestRipeSecrets(RipeSecrets []string, clonePath string, destEnv string) {
+func HarvestRipeSecrets(RipeSecrets []string, config config) {
 	if len(RipeSecrets) == 0 {
 	} else {
 
-		r, err := git.PlainOpen(clonePath)
+		r, err := git.PlainOpen(config.clonePath)
 		if err != nil {
 			log.WithFields(log.Fields{"err": err}).Info("HarvestRipeSecrets plainopen failed")
 		}
@@ -34,7 +33,7 @@ func HarvestRipeSecrets(RipeSecrets []string, clonePath string, destEnv string) 
 		}
 		//Iterate ripe secrets and remove them from worktree and push changes.
 		for ripe := range RipeSecrets {
-			base := filepath.Join("declarative", destEnv, "sealedsecrets")
+			base := filepath.Join("declarative", config.destEnv, "sealedsecrets")
 			newbase := base + "/" + RipeSecrets[ripe] + ".yaml"
 			_, err = w.Remove(newbase)
 			if err != nil {
