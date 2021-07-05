@@ -374,7 +374,7 @@ func main() {
 						}
 						//..and push new files if there were any. If there are any ripe secrets, delete.
 						PickedRipeSecrets := PickRipeSecrets(last, list)
-						HarvestRipeSecrets(PickedRipeSecrets, newConfig.clonePath, newConfig.destEnv)
+						HarvestRipeSecrets(PickedRipeSecrets, newConfig)
 						gitPush(newConfig.clonePath, newConfig.destEnv, *repoUrl)
 						log.WithFields(log.Fields{"PickedRipeSecrets": PickedRipeSecrets}).Debug("PickedRipeSecrets list")
 
