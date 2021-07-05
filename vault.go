@@ -37,9 +37,10 @@ getKVAndCreateSealedSecret combines several "maker-methods":
 
 */
 func getKVAndCreateSealedSecret(client *api.Client,secretEngine string, secretName string, token string, destEnv string, pemFile string) (SealedSecret *sealedSecretPkg.SealedSecret, SingleKVFromVault *api.Secret) {
+
 	SingleKVFromVault = getSingleKV(client,secretEngine, secretName)
 	log.WithFields(log.Fields{"SingleKVFromVault": SingleKVFromVault}).Debug("getKVAndCreateSealedSecret.SingleKVFromVault")
-	k8sSecret := createK8sSecret(secretName, destEnv, secretEngine, SingleKVFromVault)
+	k8sSecret := createK8sSecret(secretName, newConfig, SingleKVFromVault)
 	log.WithFields(log.Fields{"k8sSecret": k8sSecret}).Debug("getKVAndCreateSealedSecret.k8sSecret")
 	SealedSecret = createSealedSecret(pemFile, &k8sSecret)
 	log.WithFields(log.Fields{"SealedSecret": SealedSecret}).Debug("getKVAndCreateSealedSecret.SealedSecret")
