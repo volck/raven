@@ -36,13 +36,14 @@ getKVAndCreateSealedSecret combines several "maker-methods":
 * return KV object in order to compare later.
 
 */
-func getKVAndCreateSealedSecret(client *api.Client,secretEngine string, secretName string, token string, destEnv string, pemFile string) (SealedSecret *sealedSecretPkg.SealedSecret, SingleKVFromVault *api.Secret) {
 
-	SingleKVFromVault = getSingleKV(client,secretEngine, secretName)
+func getKVAndCreateSealedSecret(client *api.Client,config config, secretName string) (SealedSecret *sealedSecretPkg.SealedSecret, SingleKVFromVault *api.Secret) {
+
+	SingleKVFromVault = getSingleKV(client,config.secretEngine, secretName)
 	log.WithFields(log.Fields{"SingleKVFromVault": SingleKVFromVault}).Debug("getKVAndCreateSealedSecret.SingleKVFromVault")
 	k8sSecret := createK8sSecret(secretName, newConfig, SingleKVFromVault)
 	log.WithFields(log.Fields{"k8sSecret": k8sSecret}).Debug("getKVAndCreateSealedSecret.k8sSecret")
-	SealedSecret = createSealedSecret(pemFile, &k8sSecret)
+	SealedSecret = createSealedSecret(newConfig.pemFile, &k8sSecret)
 	log.WithFields(log.Fields{"SealedSecret": SealedSecret}).Debug("getKVAndCreateSealedSecret.SealedSecret")
 	return
 }
