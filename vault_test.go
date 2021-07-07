@@ -77,6 +77,12 @@ func TestCreatek8sSecret(t *testing.T) {
 	cluster := createVaultTestCluster(t)
 	defer cluster.Cleanup()
 	client := cluster.Cores[0].Client
+	config := config{
+		vaultEndpoint: cluster.Cores[0].Client.Address(),
+		secretEngine:  "kv",
+		token:         client.Token(),
+		destEnv:       "kv",
+	}
 
 	// make testable secrets for cluster
 	secrets := map[string]interface{}{
@@ -86,7 +92,7 @@ func TestCreatek8sSecret(t *testing.T) {
 	client.Logical().Write("kv/data/secret", secrets)
 
 	singleSecret := getSingleKV(client, "kv", "secret")
-	k8sSecret := createK8sSecret("secret", "kv", "kv", singleSecret)
+	k8sSecret := createK8sSecret("secret", config, singleSecret)
 	if k8sSecret.Data == nil && k8sSecret.StringData == nil {
 		t.Fatal("k8sSecret nil, data not loaded")
 	}
@@ -99,7 +105,12 @@ func TestCreatek8sSecretwWithBase64Data(t *testing.T) {
 	cluster := createVaultTestCluster(t)
 	defer cluster.Cleanup()
 	client := cluster.Cores[0].Client
-
+	config := config{
+		vaultEndpoint: cluster.Cores[0].Client.Address(),
+		secretEngine:  "kv",
+		token:         client.Token(),
+		destEnv:       "kv",
+	}
 	//create base64Datasecret
 	b64DataSecret := map[string]interface{}{
 		"data": map[string]interface{}{"b64secretData": `base64:LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUZWekNDQXorZ0F3SUJBZ0lKQU9MTEw2V2Va
@@ -142,7 +153,7 @@ emxMCi0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
 	// write testobject
 	client.Logical().Write("kv/data/b64data", b64DataSecret)
 	singleSecret := getSingleKV(client, "kv", "b64data")
-	k8sSecret := createK8sSecret("b64data", "kv", "kv", singleSecret)
+	k8sSecret := createK8sSecret("b64data", config, singleSecret)
 	for _, v := range k8sSecret.Data {
 		if strings.Contains(string(v), "base64") {
 			t.Fatal("base64 not trimmed")
@@ -158,7 +169,12 @@ func TestGetKVAndCreateNormalSealedSecret(t *testing.T) {
 	cluster := createVaultTestCluster(t)
 	defer cluster.Cleanup()
 	client := cluster.Cores[0].Client
-
+	config := config{
+		vaultEndpoint: cluster.Cores[0].Client.Address(),
+		secretEngine:  "kv",
+		token:         client.Token(),
+		destEnv:       "kv",
+	}
 	// make testable secrets for cluster
 	secrets := map[string]interface{}{
 		"data":     map[string]interface{}{"secretKey": "secretValue"},
@@ -168,13 +184,13 @@ func TestGetKVAndCreateNormalSealedSecret(t *testing.T) {
 
 	secretEngine := "kv"
 	secretName := "secret"
-	destEnv := "kv"
 	pemFile := `cert.crt`
 
 	SingleKVFromVault := getSingleKV(client, secretEngine, secretName)
-	k8sSecret := createK8sSecret(secretName, destEnv, secretEngine, SingleKVFromVault)
+	k8sSecret := createK8sSecret(secretName, config, SingleKVFromVault)
 	SealedSecret := createSealedSecret(pemFile, &k8sSecret)
-	fmt.Println(SealedSecret)
+	fmt.Printf("k8sSecret.Data: %v \n k8sSecret.StringData: %v \n k8sSecret.Annotations: %v \n", k8sSecret.Data, k8sSecret.StringData, k8sSecret.Annotations)
+	fmt.Printf("SealedSecret: %v \n SealedSecret.Annotations: %v \n", SealedSecret, k8sSecret.Annotations)
 
 }
 
@@ -184,6 +200,12 @@ func TestGetKVAndCreateSealedSecretWithDocumentKeysAnnotations(t *testing.T) {
 	cluster := createVaultTestCluster(t)
 	defer cluster.Cleanup()
 	client := cluster.Cores[0].Client
+	config := config{
+		vaultEndpoint: cluster.Cores[0].Client.Address(),
+		secretEngine:  "kv",
+		token:         client.Token(),
+		destEnv:       "kv",
+	}
 
 	secrets := map[string]interface{}{
 		"data":     map[string]interface{}{"totallyDifferent": "secretValue", "raven/description": "some very secret secret that we need to use to make world go around"},
@@ -195,11 +217,10 @@ func TestGetKVAndCreateSealedSecretWithDocumentKeysAnnotations(t *testing.T) {
 
 	secretEngine := "kv"
 	secretName := "DocumentKeyAnnotation"
-	destEnv := "kv"
 	pemFile := `cert.crt`
 
 	SingleKVFromVault := getSingleKV(client, secretEngine, secretName)
-	k8sSecret := createK8sSecret(secretName, destEnv, secretEngine, SingleKVFromVault)
+	k8sSecret := createK8sSecret(secretName, config, SingleKVFromVault)
 	SealedSecret := createSealedSecret(pemFile, &k8sSecret)
 	seen := false
 
@@ -208,6 +229,7 @@ func TestGetKVAndCreateSealedSecretWithDocumentKeysAnnotations(t *testing.T) {
 		for i := range newConfig.DocumentationKeys {
 			if newConfig.DocumentationKeys[i] == keySealedSecret {
 				seen = true
+				fmt.Printf("DocumentationKey(%s) seen here, present in sealed secret as annotation \n", keySealedSecret)
 			}
 		}
 	}
@@ -285,7 +307,9 @@ GcBNYzovELWgwrTkcln68AOhJ5cRqQav/yWnTyyd6wlmtSR7nOnqKx32Uw==
 	return privateKeys
 }
 
-func generateTestSecrets(t *testing.T, client *api.Client,secretEngine string, secretName string, destEnv string, pemFile string) {
+// func generateTestSecrets(t *testing.T, client *api.Client, secretEngine string, secretName string, destEnv string, pemFile string) {
+
+func generateTestSecrets(t *testing.T, client *api.Client, config config, secretName string) {
 	t.Helper()
 
 	// make testable secrets for cluster
@@ -293,20 +317,28 @@ func generateTestSecrets(t *testing.T, client *api.Client,secretEngine string, s
 		"data":     map[string]interface{}{"secretKey": "secretValue"},
 		"metadata": map[string]interface{}{"version": 2},
 	}
-
-	client.Logical().Write("kv/data/secret", secrets)
+	writePath := fmt.Sprintf("%s/data/%s", config.secretEngine, secretName)
+	client.Logical().Write(writePath, secrets)
 
 }
 
+//func ReadConvertKVFromVault(t *testing.T, client *api.Client, secretEngine string, secretName string, destEnv string, pemFile string) (*sealedSecretPkg.SealedSecret, v1.Secret) {
 func ReadConvertKVFromVault(t *testing.T, client *api.Client, secretEngine string, secretName string, destEnv string, pemFile string) (*sealedSecretPkg.SealedSecret, v1.Secret) {
 	t.Helper()
 	// make testable secrets for cluster
 	cluster := createVaultTestCluster(t)
 	defer cluster.Cleanup()
 	client = cluster.Cores[0].Client
-	generateTestSecrets(t, client, secretName, secretName, destEnv, pemFile)
+
+	config := config{
+		vaultEndpoint: cluster.Cores[0].Client.Address(),
+		secretEngine:  "kv",
+		token:         client.Token(),
+		destEnv:       "kv",
+	}
+	generateTestSecrets(t, client, config, secretName)
 	SingleKVFromVault := getSingleKV(client, secretEngine, secretName)
-	k8sSecret := createK8sSecret(secretName, destEnv, secretEngine, SingleKVFromVault)
+	k8sSecret := createK8sSecret(secretName, config, SingleKVFromVault)
 	SealedSecret := createSealedSecret(pemFile, &k8sSecret)
 	return SealedSecret, k8sSecret
 }
@@ -326,6 +358,7 @@ func CompareSealedAndK8sSecrets(t *testing.T, UnsealedSecret *v1.Secret, k8sSecr
 		for k8sKey, k8sValue := range k8sSecret.StringData {
 			if UnsealedSecretKey == k8sKey && k8sValue == string(UnsealedSecretValue) {
 				valid = true
+				fmt.Printf("found valid field: %s and valid key %s ", UnsealedSecretKey, UnsealedSecretValue)
 			}
 		}
 	}
@@ -337,14 +370,20 @@ func TestSealedSecretMatchk8sSecret(t *testing.T) {
 	cluster := createVaultTestCluster(t)
 	defer cluster.Cleanup()
 	client := cluster.Cores[0].Client
-	secretEngine := "kv"
-	secretName := "secret"
-	destEnv := "kv"
-	pemFile := `cert.pem`
 
-	generateTestSecrets(t, client, secretName, secretName, destEnv, pemFile)
+	config := config{
+		vaultEndpoint: cluster.Cores[0].Client.Address(),
+		secretEngine:  "kv",
+		token:         client.Token(),
+		destEnv:       "kv",
+		pemFile:       "cert.pem",
+	}
+
+	secretName := "secret"
+
+	generateTestSecrets(t, client, config, secretName)
 	//we need to unseal sealedsecret and compare it to a k8sSecret
-	SealedSecret, k8sSecret := ReadConvertKVFromVault(t, client, secretEngine, secretName, destEnv, pemFile)
+	SealedSecret, k8sSecret := ReadConvertKVFromVault(t, client, config.secretEngine, secretName, config.destEnv, config.pemFile)
 	var codecs serializer.CodecFactory
 
 	privateKeys := ReturnPrivateKey(t)
