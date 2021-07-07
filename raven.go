@@ -1,11 +1,8 @@
 package main
 
 import (
-	"encoding/base64"
 	"flag"
 	"fmt"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
 	"io/ioutil"
 	"math/rand"
 	"os"
@@ -14,8 +11,6 @@ import (
 	"github.com/hashicorp/vault/api"
 
 	"path/filepath"
-	"reflect"
-	"strconv"
 	"strings"
 	"time"
 
@@ -118,94 +113,12 @@ returns v1.Secret for consumption by SealedSecret
 func createK8sSecret(name string, config config, dataFields *api.Secret) (secret v1.Secret) {
 
 
-	Annotations := make(map[string]string)
-	for k, v := range dataFields.Data["metadata"].(map[string]interface{}) {
-		switch v.(type) {
-		case float64:
-			float64value := reflect.ValueOf(v)
-			float64convert := strconv.FormatFloat(float64value.Float(), 'f', -1, 64)
-			Annotations[k] = float64convert
-		case string:
-			Annotations[k] = v.(string)
-		case bool:
-			booleanvalue := reflect.ValueOf(v)
-			boolconvert := strconv.FormatBool(booleanvalue.Bool())
-			Annotations[k] = boolconvert
-		}
-	}
+	Annotations := applyAnnotations(dataFields, config)
+	data, stringdata := applyDatafieldsTok8sSecret(dataFields, config, Annotations)
+	Annotations = applyMetadata(dataFields, config, Annotations)
 
-	stringdata := make(map[string]string)
-	data := make(map[string][]byte)
-	isbase64 := func(s string) bool {
-		_, err := base64.StdEncoding.DecodeString(s)
-		if err != nil {
-			return false
-		}
-		return true
-	}
-	Annotations["source"] = config.secretEngine
-	if dataFields.Data["data"] == nil {
-		log.WithFields(log.Fields{"secret": name}).Info("secret has no data defined in body. skipping it.")
-	} else {
-		for k, v := range dataFields.Data["data"].(map[string]interface{}) {
-			log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["data"]}).Debug("createK8sSecret: dataFields.Data[data] iterate")
-			if strings.HasPrefix(v.(string), "base64:") {
-				stringSplit := strings.Split(v.(string), ":")
-				if isbase64(stringSplit[1]) {
-					data[k], _ = base64.StdEncoding.DecodeString(stringSplit[1])
-
-					log.WithFields(log.Fields{"key": k, "value": v, "split": stringSplit, "datafields": dataFields.Data["data"]}).Debug("createK8sSecret: dataFields.Data[data] found base64-encoding")
-				} else {
-					log.WithFields(log.Fields{"key": k, "value": v}).Warn("key is not valid BASE64")
-				}
-			} else if isDocumentationKey(newConfig.DocumentationKeys, k) {
-				Annotations[k] = v.(string)
-				log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["data"], "Annotations": Annotations}).Debug("createK8sSecret: dataFields.Data[data] found description field")
-			} else {
-				stringdata[k] = v.(string)
-				log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["data"]}).Debug("createK8sSecret: dataFields.Data[data] catch all. putting value in stringdata[]")
-			}
-		}
-	}
-	if dataFields.Data["metadata"] == nil {
-		log.WithFields(log.Fields{"secret": name}).Info("secret has no metadata defined in body. skipping it.")
-	} else {
-		for k, v := range dataFields.Data["metadata"].(map[string]interface{}) {
-			// we handle descriptions for KVs here, in order to show which secrets are handled by which SSG.
-			switch v.(type) {
-			case float64:
-
-				float64value := reflect.ValueOf(v)
-				float64convert := strconv.FormatFloat(float64value.Float(), 'f', -1, 64)
-				Annotations[k] = float64convert
-				log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["metadata"]}).Debug("createK8sSecret: dataFields.Data[metadata] case match float64 ")
-			case string:
-				Annotations[k] = v.(string)
-				log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["metadata"]}).Debug("createK8sSecret: dataFields.Data[metadata] case match string ")
-			case bool:
-				booleanvalue := reflect.ValueOf(v)
-				boolconvert := strconv.FormatBool(booleanvalue.Bool())
-				Annotations[k] = boolconvert
-				log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["metadata"]}).Debug("createK8sSecret: dataFields.Data[metadata] case match bool ")
-			}
-
-		}
-	}
-
-	secret = v1.Secret{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "SealedSecret",
-			APIVersion: "bitnami.com/v1alpha1",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        name,
-			Namespace:   config.destEnv,
-			Annotations: Annotations,
-		},
-		Data:       data,
-		StringData: stringdata,
-		Type:       "Opaque",
-	}
+	SecretContent := SecretContents{stringdata: stringdata, data: data, Annotations: Annotations}
+	secret = NewSecretWithContents(SecretContent, config)
 
 	log.WithFields(log.Fields{"typeMeta": secret.TypeMeta, "objectMeta": secret.ObjectMeta, "data": data, "stringData": stringdata, "secret": secret}).Debug("createK8sSecret: made k8s secret object")
 	return
