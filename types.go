@@ -1,7 +1,5 @@
 package main
 
-
-
 type config struct {
 	vaultEndpoint     string
 	secretEngine      string
@@ -22,4 +20,11 @@ type vaultConfig struct {
 type gitConfig struct {
 	clonePath string
 	repoUrl   string
+}
+
+type SecretContents struct {
+	stringdata map[string]string
+	data map[string][]byte
+	Annotations map[string]string
+	name string
 }
