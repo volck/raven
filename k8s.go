@@ -16,8 +16,8 @@ func applyAnnotations(dataFields *api.Secret, config config) map[string]string {
 	Annotations := make(map[string]string)
 	Annotations["source"] = config.secretEngine
 
-	if len(dataFields.Data) == 0 {
-		log.WithFields(log.Fields{`len(data["metadata"])`: len(dataFields.Data)}).Debug("No datafields placed")
+	if len(dataFields.Data["metadata"].(map[string]interface{})) == 0 {
+		log.WithFields(log.Fields{`len(data["metadata"])`: len(dataFields.Data)}).Debug("No datafields applied")
 	} else {
 		for k, v := range dataFields.Data["metadata"].(map[string]interface{}) {
 			switch v.(type) {
