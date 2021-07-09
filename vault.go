@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"net/http"
 
-	"reflect"
-
 	sealedSecretPkg "github.com/bitnami-labs/sealed-secrets/pkg/apis/sealed-secrets/v1alpha1"
 	"github.com/hashicorp/vault/api"
 	log "github.com/sirupsen/logrus"
@@ -54,27 +52,9 @@ PickRipeSecrets() uses Alive() to check if we have dead secrets
 */
 
 func PickRipeSecrets(PreviousKV *api.Secret, NewKV *api.Secret) (RipeSecrets []string) {
-	log.WithFields(log.Fields{
-		"previousKeys": PreviousKV.Data["keys"],
-		"newKV":        NewKV.Data["keys"],
-	}).Debug("PickRipeSecrets is starting to compare lists")
-
-	if PreviousKV.Data["keys"] == nil || NewKV.Data["keys"] == nil {
-		// we assume this is our first run so we do not know difference yet.
-		log.WithFields(log.Fields{"previousKeys": PreviousKV.Data["keys"], "newKV": NewKV.Data["keys"]}).Debug("PickRipeSecrets compared lists and found that either of the lists were nil")
-
-	} else if reflect.DeepEqual(PreviousKV.Data["keys"], NewKV.Data["keys"]) {
-		log.WithFields(log.Fields{"previousKeys": PreviousKV.Data["keys"], "newKV": NewKV.Data["keys"]}).Debug("PickRipeSecrets: Lists match.")
-	} else {
-		for _, v := range PreviousKV.Data["keys"].([]interface{}) {
-			isAlive := Alive(NewKV.Data["keys"].([]interface{}), v.(string))
-			if !isAlive {
-				log.WithFields(log.Fields{"PreviousKV.Data": PreviousKV.Data}).Debug("PickRipeSecrets: We have found a ripe secret. adding it to list of ripesecrets now.")
-				log.WithFields(log.Fields{"RipeSecret": v.(string)}).Info("PickRipeSecrets: We have found a ripe secret. adding it to list of ripesecrets now.")
-				RipeSecrets = append(RipeSecrets, v.(string))
-				log.WithFields(log.Fields{"RipeSecret": RipeSecrets}).Debug("PickRipeSecrets final list of ripe secrets")
-			}
-		}
+	log.WithFields(log.Fields{"previousKeys": PreviousKV.Data["keys"], "newKV": NewKV.Data["keys"]}).Debug("PickRipeSecrets is starting to compare lists")
+	if !firstRun(PreviousKV, NewKV) && !ListsMatch(PreviousKV, NewKV) {
+	RipeSecrets = findRipeSecrets(PreviousKV, NewKV)
 	}
 	return
 }
