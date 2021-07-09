@@ -37,9 +37,9 @@ getKVAndCreateSealedSecret combines several "maker-methods":
 
 */
 
-func getKVAndCreateSealedSecret(client *api.Client,config config, secretName string) (SealedSecret *sealedSecretPkg.SealedSecret, SingleKVFromVault *api.Secret) {
+func getKVAndCreateSealedSecret(client *api.Client, config config, secretName string) (SealedSecret *sealedSecretPkg.SealedSecret, SingleKVFromVault *api.Secret) {
 
-	SingleKVFromVault = getSingleKV(client,config.secretEngine, secretName)
+	SingleKVFromVault = getSingleKV(client, config.secretEngine, secretName)
 	log.WithFields(log.Fields{"SingleKVFromVault": SingleKVFromVault}).Debug("getKVAndCreateSealedSecret.SingleKVFromVault")
 	k8sSecret := createK8sSecret(secretName, newConfig, SingleKVFromVault)
 	log.WithFields(log.Fields{"k8sSecret": k8sSecret}).Debug("getKVAndCreateSealedSecret.k8sSecret")
@@ -61,16 +61,10 @@ func PickRipeSecrets(PreviousKV *api.Secret, NewKV *api.Secret) (RipeSecrets []s
 
 	if PreviousKV.Data["keys"] == nil || NewKV.Data["keys"] == nil {
 		// we assume this is our first run so we do not know difference yet.
-		log.WithFields(log.Fields{
-			"previousKeys": PreviousKV.Data["keys"],
-			"newKV":        NewKV.Data["keys"],
-		}).Debug("PickRipeSecrets compared lists and found that either of the lists were nil")
+		log.WithFields(log.Fields{"previousKeys": PreviousKV.Data["keys"], "newKV": NewKV.Data["keys"]}).Debug("PickRipeSecrets compared lists and found that either of the lists were nil")
 
 	} else if reflect.DeepEqual(PreviousKV.Data["keys"], NewKV.Data["keys"]) {
-		log.WithFields(log.Fields{
-			"previousKeys": PreviousKV.Data["keys"],
-			"newKV":        NewKV.Data["keys"],
-		}).Debug("PickRipeSecrets: Lists match.")
+		log.WithFields(log.Fields{"previousKeys": PreviousKV.Data["keys"], "newKV": NewKV.Data["keys"]}).Debug("PickRipeSecrets: Lists match.")
 	} else {
 		for _, v := range PreviousKV.Data["keys"].([]interface{}) {
 			isAlive := Alive(NewKV.Data["keys"].([]interface{}), v.(string))
@@ -90,7 +84,7 @@ getallKvs parameters:
 enviroment(i.e qa??, dev??)
 */
 
-func getAllKVs(client *api.Client,env string, token string) (Secret *api.Secret, err error) {
+func getAllKVs(client *api.Client, env string, token string) (Secret *api.Secret, err error) {
 	url := env + "/metadata"
 
 	Secret, err = client.Logical().List(url)
@@ -104,7 +98,7 @@ func getAllKVs(client *api.Client,env string, token string) (Secret *api.Secret,
 getsingleKV() used to iterate struct from getAllKVs(), takes secretname as input, returns struct for single secret. Requires uniform data.
 */
 
-func getSingleKV(client *api.Client,env string, secretname string) (Secret *api.Secret) {
+func getSingleKV(client *api.Client, env string, secretname string) (Secret *api.Secret) {
 	//url := vaultEndPoint + "/v1/" + env + "/data/" + secretname
 
 	path := fmt.Sprintf("%s/data/%s", env, secretname)
