@@ -449,14 +449,14 @@ func TestPickRipeSecretsReturnsOne(t *testing.T) {
 	generateTestSecrets(t, client, config, secretName)
 	generateTestSecrets(t, client, config, secretNameTwo)
 
-	PreviousKV, err := getAllKVs(client, config.secretEngine, client.Token())
+	PreviousKV, err := getAllKVs(client, config)
 	if err != nil {
 		fmt.Println(err)
 	}
 
 	deleteTestSecrets(t, client, config, secretName)
 
-	newKV, err := getAllKVs(client, config.secretEngine, client.Token())
+	newKV, err := getAllKVs(client,config)
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -486,12 +486,12 @@ func TestPickRipeSecretsReturnsNoRipe(t *testing.T) {
 	generateTestSecrets(t, client, config, secretName)
 	generateTestSecrets(t, client, config, secretNameTwo)
 
-	PreviousKV, err := getAllKVs(client, config.secretEngine, client.Token())
+	PreviousKV, err := getAllKVs(client,config)
 	if err != nil {
 		fmt.Println(err)
 	}
 
-	newKV, err := getAllKVs(client, config.secretEngine, client.Token())
+	newKV, err := getAllKVs(client, config)
 	if err != nil {
 		fmt.Println(err)
 	}
