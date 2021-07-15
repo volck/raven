@@ -34,7 +34,7 @@ func TestGetAllKVs(t *testing.T) {
 	secretName := "secretsecretsecret"
 	generateTestSecrets(t, client, config, secretName)
 	// Pass the client to the code under test.
-	_, err := getAllKVs(client, "secret", client.Token())
+	_, err := getAllKVs(client, config)
 	if err != nil {
 		t.Fatal(err)
 	}
