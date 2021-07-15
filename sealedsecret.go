@@ -104,7 +104,16 @@ func firstRun(PreviousKV *api.Secret, NewKV *api.Secret) bool {
 	return validator
 }
 
-func ListsMatch(PreviousKV *api.Secret, NewKV *api.Secret) bool {
+func listsEmpty(PreviousKV *api.Secret, NewKV *api.Secret)(bool) {
+	emptyList := false
+	if NewKV == nil {
+		emptyList = true
+	}
+	return emptyList
+}
+
+
+func listsMatch(PreviousKV *api.Secret, NewKV *api.Secret) bool {
 	validator := false
 
 	if reflect.DeepEqual(PreviousKV.Data["keys"], NewKV.Data["keys"]) {
@@ -124,5 +133,5 @@ func findRipeSecrets(PreviousKV *api.Secret, NewKV *api.Secret) (RipeSecrets []s
 			log.WithFields(log.Fields{"RipeSecret": RipeSecrets}).Debug("PickRipeSecrets final list of ripe secrets")
 		}
 	}
-	return
+	return RipeSecrets
 }
