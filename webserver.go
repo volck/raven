@@ -13,7 +13,7 @@ func forceRefresh(wg *sync.WaitGroup) {
 		log.WithFields(log.Fields{"error": err}).Fatal("client not initialized")
 
 	}
-	var list, errorHere = getAllKVs(client, newConfig.secretEngine, newConfig.token)
+	var list, errorHere = getAllKVs(client, newConfig)
 	if errorHere != nil {
 		log.WithFields(log.Fields{"list": list, "error": errorHere.Error()}).Warn("forceRefresh().getAllKVs failed")
 	}
