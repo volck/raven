@@ -24,14 +24,15 @@ func TestGetAllKVs(t *testing.T) {
 	cluster := createVaultTestCluster(t)
 	defer cluster.Cleanup()
 	client := cluster.Cores[0].Client
-
-	// make testable secrets for cluster
-	secrets := map[string]interface{}{
-		"data":     map[string]interface{}{"secretKey": "secretValue"},
-		"metadata": map[string]interface{}{"version": 2},
+	config := config{
+		vaultEndpoint: cluster.Cores[0].Client.Address(),
+		secretEngine:  "kv",
+		token:         client.Token(),
+		destEnv:       "kv",
+		pemFile:       "cert.pem",
 	}
-	client.Logical().Write("kv/data/secret", secrets)
-
+	secretName := "secretsecretsecret"
+	generateTestSecrets(t, client, config, secretName)
 	// Pass the client to the code under test.
 	_, err := getAllKVs(client, "secret", client.Token())
 	if err != nil {
