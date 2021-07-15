@@ -191,7 +191,7 @@ func main() {
 			for {
 				if validateSelftoken(client) {
 					log.WithFields(log.Fields{}).Debug("Validated Token: grabbing list of secrets")
-					var list, err = getAllKVs(client, newConfig.secretEngine, newConfig.token)
+					var list, err = getAllKVs(client, newConfig)
 					if err != nil {
 						log.WithFields(log.Fields{"error": err}).Error("getAllKVs list error")
 					}

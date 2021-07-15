@@ -53,9 +53,9 @@ func PickRipeSecrets(PreviousKV *api.Secret, NewKV *api.Secret) (RipeSecrets []s
 	}
 	return RipeSecrets
 }
-
-func getAllKVs(client *api.Client, env string, token string) (Secret *api.Secret, err error) {
-	url := env + "/metadata"
+//env string, token string
+func getAllKVs(client *api.Client,config config) (Secret *api.Secret, err error) {
+	url := config.secretEngine + "/metadata"
 
 	Secret, err = client.Logical().List(url)
 	if err != nil {
