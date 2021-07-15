@@ -322,6 +322,15 @@ func generateTestSecrets(t *testing.T, client *api.Client, config config, secret
 
 }
 
+func deleteTestSecrets(t *testing.T, client *api.Client, config config, secretName string) {
+	t.Helper()
+	dataPath := fmt.Sprintf("%s/data/%s", config.secretEngine, secretName)
+	client.Logical().Delete(dataPath)
+	metadataPath := fmt.Sprintf("%s/metadata/%s", config.secretEngine, secretName)
+	client.Logical().Delete(metadataPath)
+
+}
+
 //func ReadConvertKVFromVault(t *testing.T, client *api.Client, secretEngine string, secretName string, destEnv string, pemFile string) (*sealedSecretPkg.SealedSecret, v1.Secret) {
 func ReadConvertKVFromVault(t *testing.T, client *api.Client, secretEngine string, secretName string, destEnv string, pemFile string) (*sealedSecretPkg.SealedSecret, v1.Secret) {
 	t.Helper()
@@ -420,4 +429,76 @@ func createVaultTestCluster(t *testing.T) *hashivault.TestCluster {
 	}
 
 	return cluster
+}
+
+func TestPickRipeSecretsReturnsOne(t *testing.T) {
+	cluster := createVaultTestCluster(t)
+	defer cluster.Cleanup()
+	client := cluster.Cores[0].Client
+
+	config := config{
+		vaultEndpoint: cluster.Cores[0].Client.Address(),
+		secretEngine:  "kv",
+		token:         client.Token(),
+		destEnv:       "kv",
+		pemFile:       "cert.pem",
+	}
+
+	secretName := "secret"
+	secretNameTwo := "secrettwo"
+	generateTestSecrets(t, client, config, secretName)
+	generateTestSecrets(t, client, config, secretNameTwo)
+
+	PreviousKV, err := getAllKVs(client, config.secretEngine, client.Token())
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	deleteTestSecrets(t, client, config, secretName)
+
+	newKV, err := getAllKVs(client, config.secretEngine, client.Token())
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	picked := PickRipeSecrets(PreviousKV, newKV)
+	fmt.Println(picked, len(picked))
+	if len(picked) == 0 {
+		t.Fatal("PickRipeSecrets should have returned 1 here")
+	}
+}
+
+func TestPickRipeSecretsReturnsNoRipe(t *testing.T) {
+	cluster := createVaultTestCluster(t)
+	defer cluster.Cleanup()
+	client := cluster.Cores[0].Client
+
+	config := config{
+		vaultEndpoint: cluster.Cores[0].Client.Address(),
+		secretEngine:  "kv",
+		token:         client.Token(),
+		destEnv:       "kv",
+		pemFile:       "cert.pem",
+	}
+
+	secretName := "secret"
+	secretNameTwo := "secrettwo"
+	generateTestSecrets(t, client, config, secretName)
+	generateTestSecrets(t, client, config, secretNameTwo)
+
+	PreviousKV, err := getAllKVs(client, config.secretEngine, client.Token())
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	newKV, err := getAllKVs(client, config.secretEngine, client.Token())
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	picked := PickRipeSecrets(PreviousKV, newKV)
+	fmt.Println(picked, len(picked))
+	if len(picked) != 0 {
+		t.Fatal("PickRipeSecrets should have returned 1 here")
+	}
 }
