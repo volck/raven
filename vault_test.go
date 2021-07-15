@@ -331,7 +331,6 @@ func deleteTestSecrets(t *testing.T, client *api.Client, config config, secretNa
 
 }
 
-//func ReadConvertKVFromVault(t *testing.T, client *api.Client, secretEngine string, secretName string, destEnv string, pemFile string) (*sealedSecretPkg.SealedSecret, v1.Secret) {
 func ReadConvertKVFromVault(t *testing.T, client *api.Client, secretEngine string, secretName string, destEnv string, pemFile string) (*sealedSecretPkg.SealedSecret, v1.Secret) {
 	t.Helper()
 	// make testable secrets for cluster
