@@ -106,7 +106,7 @@ func firstRun(PreviousKV *api.Secret, NewKV *api.Secret) bool {
 
 func listsEmpty(PreviousKV *api.Secret, NewKV *api.Secret)(bool) {
 	emptyList := false
-	if NewKV == nil {
+	if NewKV == nil || PreviousKV == nil{
 		emptyList = true
 	}
 	return emptyList
