@@ -46,23 +46,13 @@ func getKVAndCreateSealedSecret(client *api.Client, config config, secretName st
 	return
 }
 
-/*
-PickRipeSecrets() uses Alive() to check if we have dead secrets
-
-*/
-
 func PickRipeSecrets(PreviousKV *api.Secret, NewKV *api.Secret) (RipeSecrets []string) {
-	log.WithFields(log.Fields{"previousKeys": PreviousKV.Data["keys"], "newKV": NewKV.Data["keys"]}).Debug("PickRipeSecrets is starting to compare lists")
-	if !firstRun(PreviousKV, NewKV) && !ListsMatch(PreviousKV, NewKV) {
-	RipeSecrets = findRipeSecrets(PreviousKV, NewKV)
+	if listsEmpty(PreviousKV, NewKV) {
+	} else if !firstRun(PreviousKV, NewKV) && !listsMatch(PreviousKV, NewKV) {
+		RipeSecrets = findRipeSecrets(PreviousKV, NewKV)
 	}
-	return
+	return RipeSecrets
 }
-
-/*
-getallKvs parameters:
-enviroment(i.e qa??, dev??)
-*/
 
 func getAllKVs(client *api.Client, env string, token string) (Secret *api.Secret, err error) {
 	url := env + "/metadata"
