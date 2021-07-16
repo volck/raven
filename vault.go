@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"github.com/go-git/go-git/v5"
 	"net/http"
+	"path/filepath"
 
 	sealedSecretPkg "github.com/bitnami-labs/sealed-secrets/pkg/apis/sealed-secrets/v1alpha1"
 	"github.com/hashicorp/vault/api"
@@ -53,8 +55,21 @@ func PickRipeSecrets(PreviousKV *api.Secret, NewKV *api.Secret) (RipeSecrets []s
 	}
 	return RipeSecrets
 }
+
+func iterateRipeSecretsAndRemoveFromWorkingtree(RipeSecrets []string, worktree *git.Worktree, newConfig config) {
+	for ripe := range RipeSecrets {
+		base := filepath.Join("declarative", newConfig.destEnv, "sealedsecrets")
+		newbase := base + "/" + RipeSecrets[ripe] + ".yaml"
+		_, err := worktree.Remove(newbase)
+		if err != nil {
+			log.WithFields(log.Fields{"err": err}).Error("HarvestRipeSecrets worktree.Remove failed")
+		}
+		log.WithFields(log.Fields{"ripeSecret": RipeSecrets[ripe]}).Info("HarvestRipeSecrets found ripe secret. marked for deletion")
+	}
+}
+
 //env string, token string
-func getAllKVs(client *api.Client,config config) (Secret *api.Secret, err error) {
+func getAllKVs(client *api.Client, config config) (Secret *api.Secret, err error) {
 	url := config.secretEngine + "/metadata"
 
 	Secret, err = client.Logical().List(url)
