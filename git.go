@@ -17,6 +17,12 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+func addtoWorktree(item string, worktree *git.Worktree) () {
+	_, err := worktree.Add(item)
+	if err != nil {
+		log.WithFields(log.Fields{"error": err}).Error("Raven gitPush:worktree add error")
+	}
+}
 func setSSHConfig() (auth transport.AuthMethod) {
 	sshKey, err := ioutil.ReadFile("/secret/sshKey")
 	if err != nil {
@@ -79,82 +85,42 @@ func GitClone(LocalPath string, url string) {
 	}
 }
 
+func gitPush(config config) {
+	repo := InitializeGitRepo(config)
 
-func gitPush(LocalPath string, env string, url string) {
-	r, err := git.PlainOpen(LocalPath)
-	if err != nil {
-		WriteErrorToTerminationLog("plainOpen failed")
-		log.WithFields(log.Fields{"error": err}).Error("Raven PlainOpen failed")
-	}
-
-	w, err := r.Worktree()
-	if err != nil {
-		WriteErrorToTerminationLog("gitPush failed")
-		log.WithFields(log.Fields{"error": err}).Error("GitPush WorkTree error")
-	}
+	worktree := initializeWorkTree(repo)
 
 	// Pull the latest changes from the origin remote and merge into the current branch
 	log.Debug("GitPush pulling")
-	if strings.HasPrefix(url, "ssh:") {
-		err = w.Pull(&git.PullOptions{RemoteName: "origin", Auth: setSSHConfig()})
-		if err != nil {
-			log.WithFields(log.Fields{"error": err}).Debug("Raven gitPush:Pull error")
-		}
-	} else {
-		err = w.Pull(&git.PullOptions{RemoteName: "origin"})
-		if err != nil {
-			log.WithFields(log.Fields{"error": err}).Debug("Raven gitPush:Pull error")
-		}
-	}
+	setPullOptions(config, worktree)
 
-	status, err := w.Status()
+	status, err := getGitStatus(worktree)
 	if err != nil {
-		log.WithFields(log.Fields{"error": err}).Error("Raven gitPush:worktree status error")
+		log.WithFields(log.Fields{"status": status}).Error("getGitStatus error")
 	}
-	log.WithFields(log.Fields{"status": status}).Debug("Worktree status")
-
 	if !status.IsClean() {
 		log.WithFields(log.Fields{"isClean": status.IsClean()}).Debug("gitPush found that status is not clean, making commit with changes")
-		_, err = w.Add(".")
-		if err != nil {
-			log.WithFields(log.Fields{"error": err}).Error("Raven gitPush:worktree add error")
-		}
+		addtoWorktree(".", worktree)
 
 		// We can verify the current status of the worktree using the method Status.
-
-		commit, err := w.Commit(fmt.Sprintf("Raven updated secrets in %s", env), &git.CommitOptions{
-			Author: &object.Signature{
-				Name:  "Raven",
-				Email: "itte@tæll.no",
-				When:  time.Now(),
-			},
-		})
+		commitMessage := fmt.Sprintf("Raven updated secret in %s", config.secretEngine)
+		commit, err := makeCommit(worktree, commitMessage)
 		if err != nil {
 			log.WithFields(log.Fields{"error": err}).Error("GitPush Worktree commit error")
 		}
 
 		// we need to set creds here if its a ssh connection,
-		if strings.HasPrefix(url, "ssh:") {
-			err = r.Push(&git.PushOptions{Auth: setSSHConfig()})
-			if err != nil {
-				log.WithFields(log.Fields{"error": err}).Error("Raven gitPush (ssh) prefix error")
-			}
-		} else {
-			err = r.Push(&git.PushOptions{})
-			if err != nil {
-				log.WithFields(log.Fields{"error": err}).Error("Raven gitPush (http) error")
-			}
-			// Prints the current HEAD to verify that all worked well.
-			obj, err := r.CommitObject(commit)
-			fmt.Println("head: ", obj)
-			if err != nil {
-				log.WithFields(log.Fields{"obj": obj}).Error("git show -s")
-			}
-			log.WithFields(log.Fields{"obj": obj}).Info("git show -s: commit")
-			genericPostWebHook()
-		}
+		setPushOptions(config, repo, commit)
 
+		// Prints the current HEAD to verify that all worked well.
+		obj, err := repo.CommitObject(commit)
+		if err != nil {
+			log.WithFields(log.Fields{"obj": obj}).Error("git show -s")
+		}
+		log.WithFields(log.Fields{"commitMessage": obj.Message,"When": obj.Committer.When}).Info("Secret successfully updated")
+		genericPostWebHook()
 	}
+
 }
 
 func InitializeGitRepo(config config) (r *git.Repository) {
@@ -185,11 +151,11 @@ func getGitStatus(worktree *git.Worktree) (status git.Status, err error) {
 
 }
 
-func makeCommit(worktree *git.Worktree) (commit plumbing.Hash, err error) {
+func makeCommit(worktree *git.Worktree, commitMessage string) (commit plumbing.Hash, err error) {
 	status, _ := worktree.Status()
 	log.WithFields(log.Fields{"worktree": worktree, "status": status}).Debug("HarvestRipeSecret !status.IsClean() ")
 
-	commit, err = worktree.Commit(fmt.Sprintf("Raven removed ripe secret from git"), &git.CommitOptions{
+	commit, err = worktree.Commit(fmt.Sprintf("%s", commitMessage), &git.CommitOptions{
 		Author: &object.Signature{
 			Name:  "Raven",
 			Email: "itte@tæll.no",
@@ -198,15 +164,14 @@ func makeCommit(worktree *git.Worktree) (commit plumbing.Hash, err error) {
 	})
 	return commit, err
 }
-func setSSHPushOptions(newconfig config, remote *git.Repository) {
+func setSSHPushOptions(newconfig config, remote *git.Repository) () {
 
 	err := remote.Push(&git.PushOptions{Auth: setSSHConfig()})
 	if err != nil {
-		fmt.Println("the buck stops here at setSSHPushOptions, remote push ")
 		log.WithFields(log.Fields{"error": err}).Debug("Raven gitPush error")
 	}
 }
-func setHTTPSConfig(repository *git.Repository, commit plumbing.Hash) {
+func setHTTPSPushOptions(repository *git.Repository, commit plumbing.Hash) {
 	err := repository.Push(&git.PushOptions{})
 	if err != nil {
 		fmt.Println("the buck stops here at setHTTPSConfig, remote push ")
@@ -223,11 +188,35 @@ func setHTTPSConfig(repository *git.Repository, commit plumbing.Hash) {
 	genericPostWebHook()
 }
 
+func setHTTPSPullOptions(worktree *git.Worktree) () {
+	err := worktree.Pull(&git.PullOptions{RemoteName: "origin"})
+	if err != nil {
+		log.WithFields(log.Fields{"error": err}).Debug("Raven gitPush:Pull error")
+	}
+}
+
+func setSSHPullOptions(worktree *git.Worktree) () {
+	err := worktree.Pull(&git.PullOptions{RemoteName: "origin", Auth: setSSHConfig()})
+	if err != nil {
+		log.WithFields(log.Fields{"error": err}).Debug("Raven gitPush:Pull error")
+	}
+
+}
+
+func setPullOptions(config config, worktree *git.Worktree) {
+	if strings.HasPrefix(config.repoUrl, "ssh:") {
+		setSSHPullOptions(worktree)
+
+	} else if strings.HasPrefix(config.repoUrl, "http") {
+		setHTTPSPullOptions(worktree)
+	}
+}
+
 func setPushOptions(newConfig config, repository *git.Repository, commit plumbing.Hash) {
 	if strings.HasPrefix(newConfig.repoUrl, "ssh:") {
 		setSSHPushOptions(newConfig, repository)
 	} else if strings.HasPrefix(newConfig.repoUrl, "http") {
-		setHTTPSConfig(repository, commit)
+		setHTTPSPushOptions(repository, commit)
 	}
 
 }
