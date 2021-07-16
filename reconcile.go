@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	sealedSecretPkg "github.com/bitnami-labs/sealed-secrets/pkg/apis/sealed-secrets/v1alpha1"
 	log "github.com/sirupsen/logrus"
 	k8sJson "k8s.io/apimachinery/pkg/runtime/serializer/json"
@@ -26,8 +27,10 @@ func HarvestRipeSecrets(RipeSecrets []string, config config) {
 
 		if !status.IsClean() {
 			log.WithFields(log.Fields{"worktree": worktree, "status": status}).Debug("HarvestRipeSecret !status.IsClean() ")
-			commit, _ := makeCommit(worktree)
+			commitMessage := fmt.Sprintf("Raven removed ripe secret(s) from git")
+			commit, _ := makeCommit(worktree, commitMessage)
 			setPushOptions(config, repo, commit)
+			logHarvestDone(repo, commit)
 		}
 		log.WithFields(log.Fields{}).Debug("HarvestRipeSecrets done")
 	}
