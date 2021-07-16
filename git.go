@@ -17,6 +17,15 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+func logHarvestDone(repo *git.Repository, commit plumbing.Hash) {
+	obj, err := repo.CommitObject(commit)
+
+	if err != nil {
+		log.WithFields(log.Fields{"obj": obj}).Error("git show -s")
+	}
+	log.WithFields(log.Fields{"commitMessage": obj.Message, "When": obj.Committer.When}).Info("Harvest of ripe secrets complete")
+}
+
 func addtoWorktree(item string, worktree *git.Worktree) () {
 	_, err := worktree.Add(item)
 	if err != nil {
@@ -117,7 +126,7 @@ func gitPush(config config) {
 		if err != nil {
 			log.WithFields(log.Fields{"obj": obj}).Error("git show -s")
 		}
-		log.WithFields(log.Fields{"commitMessage": obj.Message,"When": obj.Committer.When}).Info("Secret successfully updated")
+		log.WithFields(log.Fields{"commitMessage": obj.Message, "When": obj.Committer.When}).Info("Secret successfully updated")
 		genericPostWebHook()
 	}
 
