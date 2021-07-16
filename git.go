@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/go-git/go-git/v5/plumbing"
 	"io/ioutil"
 	"net"
 	"os"
@@ -78,6 +79,7 @@ func GitClone(LocalPath string, url string) {
 	}
 }
 
+
 func gitPush(LocalPath string, env string, url string) {
 	r, err := git.PlainOpen(LocalPath)
 	if err != nil {
@@ -135,17 +137,16 @@ func gitPush(LocalPath string, env string, url string) {
 		if strings.HasPrefix(url, "ssh:") {
 			err = r.Push(&git.PushOptions{Auth: setSSHConfig()})
 			if err != nil {
-				panic(err)
+				log.WithFields(log.Fields{"error": err}).Error("Raven gitPush (ssh) prefix error")
 			}
 		} else {
 			err = r.Push(&git.PushOptions{})
 			if err != nil {
-				log.WithFields(log.Fields{"error": err}).Error("Raven gitPush error")
+				log.WithFields(log.Fields{"error": err}).Error("Raven gitPush (http) error")
 			}
 			// Prints the current HEAD to verify that all worked well.
 			obj, err := r.CommitObject(commit)
 			fmt.Println("head: ", obj)
-
 			if err != nil {
 				log.WithFields(log.Fields{"obj": obj}).Error("git show -s")
 			}
@@ -154,4 +155,79 @@ func gitPush(LocalPath string, env string, url string) {
 		}
 
 	}
+}
+
+func InitializeGitRepo(config config) (r *git.Repository) {
+	r, err := git.PlainOpen(config.clonePath)
+	if err != nil {
+		log.WithFields(log.Fields{"err": err}).Info("HarvestRipeSecrets plainopen failed")
+	}
+	return r
+}
+
+func initializeWorkTree(r *git.Repository) (w *git.Worktree) {
+	w, err := r.Worktree()
+	if err != nil {
+		log.WithFields(log.Fields{"err": err}).Error("HarvestRipeSecrets worktree failed")
+	}
+	return
+}
+
+func getGitStatus(worktree *git.Worktree) (status git.Status, err error) {
+	status, err = worktree.Status()
+
+	if err != nil {
+		log.WithFields(log.Fields{
+			"err": err,
+		}).Error("HarvestRipeSecret Worktree status failed")
+	}
+	return status, err
+
+}
+
+func makeCommit(worktree *git.Worktree) (commit plumbing.Hash, err error) {
+	status, _ := worktree.Status()
+	log.WithFields(log.Fields{"worktree": worktree, "status": status}).Debug("HarvestRipeSecret !status.IsClean() ")
+
+	commit, err = worktree.Commit(fmt.Sprintf("Raven removed ripe secret from git"), &git.CommitOptions{
+		Author: &object.Signature{
+			Name:  "Raven",
+			Email: "itte@tæll.no",
+			When:  time.Now(),
+		},
+	})
+	return commit, err
+}
+func setSSHPushOptions(newconfig config, remote *git.Repository) {
+
+	err := remote.Push(&git.PushOptions{Auth: setSSHConfig()})
+	if err != nil {
+		fmt.Println("the buck stops here at setSSHPushOptions, remote push ")
+		log.WithFields(log.Fields{"error": err}).Debug("Raven gitPush error")
+	}
+}
+func setHTTPSConfig(repository *git.Repository, commit plumbing.Hash) {
+	err := repository.Push(&git.PushOptions{})
+	if err != nil {
+		fmt.Println("the buck stops here at setHTTPSConfig, remote push ")
+
+		log.WithFields(log.Fields{"error": err}).Error("Raven gitPush error")
+	}
+	// Prints the current HEAD to verify that all worked well.
+	obj, err := repository.CommitObject(commit)
+
+	if err != nil {
+		log.WithFields(log.Fields{"obj": obj}).Error("git show -s")
+	}
+	log.WithFields(log.Fields{"obj": obj}).Info("git show -s: commit")
+	genericPostWebHook()
+}
+
+func setPushOptions(newConfig config, repository *git.Repository, commit plumbing.Hash) {
+	if strings.HasPrefix(newConfig.repoUrl, "ssh:") {
+		setSSHPushOptions(newConfig, repository)
+	} else if strings.HasPrefix(newConfig.repoUrl, "http") {
+		setHTTPSConfig(repository, commit)
+	}
+
 }
