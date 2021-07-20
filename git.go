@@ -26,6 +26,35 @@ func logHarvestDone(repo *git.Repository, commit plumbing.Hash) {
 	log.WithFields(log.Fields{"commitMessage": obj.Message, "When": obj.Committer.When}).Info("Harvest of ripe secrets complete")
 }
 
+func loadSSHKey() (sshKey []byte) {
+	sshKeyPath := os.Getenv("SSHKEYPATH")
+
+	if sshKeyPath == "" {
+		sshKey, err := ioutil.ReadFile("/secret/sshKey")
+		if err != nil {
+			log.WithFields(log.Fields{"err": err}).Fatal("setSSHConfig: unable to read private key ")
+		}
+		return sshKey
+
+	} else {
+		sshKey, err := ioutil.ReadFile(sshKeyPath)
+		if err != nil {
+			log.WithFields(log.Fields{"err": err}).Fatal("setSSHConfig: unable to read private key ")
+		}
+		return sshKey
+
+	}
+}
+
+func setSigner(sshKey []byte) (signer ssh.Signer) {
+	signer, err := ssh.ParsePrivateKey(sshKey)
+	if err != nil {
+		WriteErrorToTerminationLog("setSSHConfig: unable to read private key")
+		log.WithFields(log.Fields{"err": err}).Fatal("setSSHConfig: ParsePrivateKey err")
+	}
+	return signer
+}
+
 func addtoWorktree(item string, worktree *git.Worktree) () {
 	_, err := worktree.Add(item)
 	if err != nil {
@@ -33,23 +62,11 @@ func addtoWorktree(item string, worktree *git.Worktree) () {
 	}
 }
 func setSSHConfig() (auth transport.AuthMethod) {
-	sshKey, err := ioutil.ReadFile(`\\p0home001\UnixHome\a01631\dev\raven\id_rsa`)
-	//sshKey, err := ioutil.ReadFile("/secret/sshKey")
-	if err != nil {
-		log.WithFields(log.Fields{
-			"err": err,
-		}).Fatal("setSSHConfig: unable to read private key ")
-	}
-
-	signer, err := ssh.ParsePrivateKey(sshKey)
-	if err != nil {
-		WriteErrorToTerminationLog("setSSHConfig: unable to read private key")
-		log.WithFields(log.Fields{"err": err}).Fatal("setSSHConfig: ParsePrivateKey err")
-	}
+	sshKey := loadSSHKey()
+	signer := setSigner(sshKey)
 	hostKeyCallback := func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 		return nil
 	}
-
 	auth = &gitssh.PublicKeys{User: "git", Signer: signer, HostKeyCallbackHelper: gitssh.HostKeyCallbackHelper{
 		HostKeyCallback: hostKeyCallback,
 	}}
@@ -202,9 +219,8 @@ func setPushOptions(newConfig config, repository *git.Repository, commit plumbin
 func setSSHCloneOptions(config config) *git.CloneOptions {
 
 	cloneOptions := &git.CloneOptions{
-		URL:      config.repoUrl,
-		Progress: os.Stdout,
-		Auth:     setSSHConfig(),
+		URL:  config.repoUrl,
+		Auth: setSSHConfig(),
 	}
 	return cloneOptions
 }
@@ -212,8 +228,7 @@ func setSSHCloneOptions(config config) *git.CloneOptions {
 func setHTTPSCloneOptions(config config) *git.CloneOptions {
 
 	cloneOptions := &git.CloneOptions{
-		URL:      config.repoUrl,
-		Progress: os.Stdout,
+		URL: config.repoUrl,
 	}
 	return cloneOptions
 }
@@ -225,7 +240,6 @@ func setCloneOptions(config config) (cloneOptions *git.CloneOptions) {
 	} else if strings.HasPrefix(config.repoUrl, "ssh://") {
 		//we set up config for ssh with keys. we expect ssh://somehost/some/repo.git
 		cloneOptions = setSSHCloneOptions(config)
-		fmt.Println("ssh cloneOptions", cloneOptions)
 	} else {
 		WriteErrorToTerminationLog(fmt.Sprintf("Raven could not determine clone options(%s)", config.repoUrl))
 		log.WithFields(log.Fields{"config.RepoUrl": config.repoUrl}).Fatalf("Raven could not determine clone options")
@@ -237,12 +251,12 @@ func plainClone(config config, options *git.CloneOptions) {
 	remote, err := git.PlainClone(config.clonePath, false, options)
 	if err != nil {
 		log.WithFields(log.Fields{"error": err}).Debug("Raven GitClone error")
-
 	} else {
 		head, err := remote.Head()
 		if err != nil {
 			log.WithFields(log.Fields{"head": head, "error": err}).Warn("Gitclone Remote.head()")
 		}
-		log.WithFields(log.Fields{"head": head}).Debug("Raven GitClone complete")
 	}
+	log.WithFields(log.Fields{"repo": config.repoUrl}).Info("Raven successfully cloned repository")
+
 }
