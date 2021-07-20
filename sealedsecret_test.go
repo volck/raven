@@ -4,6 +4,7 @@ import (
 	"fmt"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
+	"reflect"
 	"testing"
 )
 
@@ -47,7 +48,6 @@ func TestSealedSecretMatchk8sSecret(t *testing.T) {
 	}
 
 }
-
 
 func TestGetKVAndCreateNormalSealedSecret(t *testing.T) {
 	t.Parallel()
@@ -122,5 +122,43 @@ func TestGetKVAndCreateSealedSecretWithDocumentKeysAnnotations(t *testing.T) {
 	if !seen {
 		t.Fatal("TestGetKVAndCreateSealedSecretWithDocumentKeysAnnotations failed. Seen:", seen)
 	}
+
+}
+
+func TestCompareThatSealedSecretAndSecretMetadataMatches(t *testing.T) {
+	t.Parallel()
+	// Initiate cluster and get client
+	cluster := createVaultTestCluster(t)
+	defer cluster.Cleanup()
+	client := cluster.Cores[0].Client
+	config := config{
+		vaultEndpoint: cluster.Cores[0].Client.Address(),
+		secretEngine:  "kv",
+		token:         client.Token(),
+		destEnv:       "kv",
+	}
+
+	secrets := map[string]interface{}{
+		"data":     map[string]interface{}{"totallyDifferent": "secretValue", "raven/description": "some very secret secret that we need to use to make world go around"},
+		"metadata": map[string]interface{}{"version": 2},
+	}
+	//make secret with raven/description field to see if DocumentKeys are working
+
+	client.Logical().Write("kv/data/TestCompareThatSealedSecretAndSecretMetadataMatches", secrets)
+
+	secretEngine := "kv"
+	secretName := "TestCompareThatSealedSecretAndSecretMetadataMatches"
+	pemFile := `cert.crt`
+
+	SingleKVFromVault := getSingleKV(client, secretEngine, secretName)
+	k8sSecret := createK8sSecret(secretName, config, SingleKVFromVault)
+	SealedSecret := createSealedSecret(pemFile, &k8sSecret)
+	if !reflect.DeepEqual(k8sSecret.TypeMeta, SealedSecret.TypeMeta) {
+		t.Fatal("TestCompareThatSealedSecretAndSecretMetadataMatches TypeMeta neq")
+	} else if !reflect.DeepEqual(k8sSecret.Annotations, k8sSecret.Annotations) {
+		t.Fatal("TestCompareThatSealedSecretAndSecretMetadataMatches Annotations neq")
+	}
+	fmt.Printf("k8s: %v \n sealed: %v \n", k8sSecret, SealedSecret)
+	fmt.Printf("sealedsecret.name: %v \n k8s.name: %v \n", SealedSecret.Name, k8sSecret.Name )
 
 }
