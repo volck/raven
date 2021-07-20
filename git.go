@@ -33,7 +33,8 @@ func addtoWorktree(item string, worktree *git.Worktree) () {
 	}
 }
 func setSSHConfig() (auth transport.AuthMethod) {
-	sshKey, err := ioutil.ReadFile("/secret/sshKey")
+	sshKey, err := ioutil.ReadFile(`\\p0home001\UnixHome\a01631\dev\raven\id_rsa`)
+	//sshKey, err := ioutil.ReadFile("/secret/sshKey")
 	if err != nil {
 		log.WithFields(log.Fields{
 			"err": err,
@@ -57,41 +58,9 @@ func setSSHConfig() (auth transport.AuthMethod) {
 
 }
 
-func GitClone(LocalPath string, url string) {
-
-	cloneOptions := &git.CloneOptions{}
-
-	if strings.HasPrefix(url, "https://") {
-		//we assume a https string with creds in it. e.g. https://someuser:somepass@somehost/some/repository.git
-
-		cloneOptions = &git.CloneOptions{
-			URL:      url,
-			Progress: os.Stdout,
-		}
-
-	} else if strings.HasPrefix(url, "ssh://") {
-		//we set up config for ssh with keys. we expect ssh://somehost/some/repo.git
-
-		cloneOptions = &git.CloneOptions{
-			URL:      url,
-			Progress: os.Stdout,
-			Auth:     setSSHConfig(),
-		}
-	}
-	// we do the clone
-	log.WithFields(log.Fields{}).Debug("Raven GitClone")
-
-	remote, err := git.PlainClone(LocalPath, false, cloneOptions)
-	if err != nil {
-		log.WithFields(log.Fields{"error": err}).Debug("Raven GitClone error")
-
-	} else {
-		head, err := remote.Head()
-		if err != nil {
-			log.WithFields(log.Fields{"head": head, "error": err}).Warn("Gitclone Remote.head()")
-		}
-		log.WithFields(log.Fields{"head": head}).Debug("Raven GitClone complete")
-	}
+func GitClone(config config) {
+	cloneOptions := setCloneOptions(config)
+	plainClone(config, cloneOptions)
 }
 
 func gitPush(config config) {
@@ -228,4 +197,52 @@ func setPushOptions(newConfig config, repository *git.Repository, commit plumbin
 		setHTTPSPushOptions(repository, commit)
 	}
 
+}
+
+func setSSHCloneOptions(config config) *git.CloneOptions {
+
+	cloneOptions := &git.CloneOptions{
+		URL:      config.repoUrl,
+		Progress: os.Stdout,
+		Auth:     setSSHConfig(),
+	}
+	return cloneOptions
+}
+
+func setHTTPSCloneOptions(config config) *git.CloneOptions {
+
+	cloneOptions := &git.CloneOptions{
+		URL:      config.repoUrl,
+		Progress: os.Stdout,
+	}
+	return cloneOptions
+}
+
+func setCloneOptions(config config) (cloneOptions *git.CloneOptions) {
+	if strings.HasPrefix(config.repoUrl, "https://") {
+		cloneOptions = setHTTPSCloneOptions(config)
+
+	} else if strings.HasPrefix(config.repoUrl, "ssh://") {
+		//we set up config for ssh with keys. we expect ssh://somehost/some/repo.git
+		cloneOptions = setSSHCloneOptions(config)
+		fmt.Println("ssh cloneOptions", cloneOptions)
+	} else {
+		WriteErrorToTerminationLog(fmt.Sprintf("Raven could not determine clone options(%s)", config.repoUrl))
+		log.WithFields(log.Fields{"config.RepoUrl": config.repoUrl}).Fatalf("Raven could not determine clone options")
+	}
+	return cloneOptions
+}
+
+func plainClone(config config, options *git.CloneOptions) {
+	remote, err := git.PlainClone(config.clonePath, false, options)
+	if err != nil {
+		log.WithFields(log.Fields{"error": err}).Debug("Raven GitClone error")
+
+	} else {
+		head, err := remote.Head()
+		if err != nil {
+			log.WithFields(log.Fields{"head": head, "error": err}).Warn("Gitclone Remote.head()")
+		}
+		log.WithFields(log.Fields{"head": head}).Debug("Raven GitClone complete")
+	}
 }
