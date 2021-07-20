@@ -112,12 +112,11 @@ returns v1.Secret for consumption by SealedSecret
 
 func createK8sSecret(name string, config config, dataFields *api.Secret) (secret v1.Secret) {
 
-
 	Annotations := applyAnnotations(dataFields, config)
 	data, stringdata := applyDatafieldsTok8sSecret(dataFields, config, Annotations)
 	Annotations = applyMetadata(dataFields, config, Annotations)
 
-	SecretContent := SecretContents{stringdata: stringdata, data: data, Annotations: Annotations}
+	SecretContent := SecretContents{stringdata: stringdata, data: data, Annotations: Annotations, name: name}
 	secret = NewSecretWithContents(SecretContent, config)
 
 	log.WithFields(log.Fields{"typeMeta": secret.TypeMeta, "objectMeta": secret.ObjectMeta, "data": data, "stringData": stringdata, "secret": secret}).Debug("createK8sSecret: made k8s secret object")
@@ -182,7 +181,7 @@ func main() {
 				WriteErrorToTerminationLog("os.Mkdir failed when trying to ensure paths for first time")
 			}
 
-			GitClone(*clonePath, *repoUrl)
+			GitClone(newConfig)
 			last := &api.Secret{}
 			if err != nil {
 				log.WithFields(log.Fields{"error": err}).Error("client not initialized")
