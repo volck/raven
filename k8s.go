@@ -15,7 +15,6 @@ func applyAnnotations(dataFields *api.Secret, config config) map[string]string {
 
 	Annotations := make(map[string]string)
 	Annotations["source"] = config.secretEngine
-
 	if len(dataFields.Data["metadata"].(map[string]interface{})) == 0 {
 		log.WithFields(log.Fields{`len(data["metadata"])`: len(dataFields.Data)}).Debug("No datafields applied")
 	} else {
@@ -52,7 +51,6 @@ func applyDatafieldsTok8sSecret(dataFields *api.Secret, config config, Annotatio
 			stringSplit := strings.Split(v.(string), ":")
 			if isBase64(stringSplit[1]) {
 				data[k], _ = base64.StdEncoding.DecodeString(stringSplit[1])
-
 				log.WithFields(log.Fields{"key": k, "value": v, "split": stringSplit, "datafields": dataFields.Data["data"]}).Debug("createK8sSecret: dataFields.Data[data] found base64-encoding")
 			} else {
 				log.WithFields(log.Fields{"key": k, "value": v}).Warn("key is not valid BASE64")
