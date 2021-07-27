@@ -192,26 +192,7 @@ func main() {
 						cleanDeadEntries()
 					} else {
 						secretList := list.Data["keys"].([]interface{})
-						for _, secret := range secretList {
-
-							log.WithFields(log.Fields{"secret": secret}).Debug("Checking secret")
-							//make SealedSecrets
-							SealedSecret, SingleKVFromVault := getKVAndCreateSealedSecret(client, newConfig, secret.(string))
-
-							//ensure that path exists in order to write to it later.
-							newBase := ensurePathandreturnWritePath(newConfig, secret.(string))
-							if _, err := os.Stat(newBase); os.IsNotExist(err) {
-								log.WithFields(log.Fields{"SealedSecret": secret.(string)}).Info(`Creating Sealed Secret`)
-								SerializeAndWriteToFile(SealedSecret, newBase)
-							} else if !readSealedSecretAndCompareWithVaultStruct(secret.(string), SingleKVFromVault, newBase, newConfig.secretEngine) {
-								log.WithFields(log.Fields{"secret": secret}).Debug("readSealedSecretAndCompare: we already have this secret. Vault did not update")
-							} else {
-								// we need to update the secret.
-								log.WithFields(log.Fields{"SealedSecret": secret, "newBase": newBase}).Info("readSealedSecretAndCompare: Found new secret, need to create new sealed secret file")
-								SerializeAndWriteToFile(SealedSecret, newBase)
-							}
-
-						}
+						persistVaultChanges(secretList, client)
 						//..and push new files if there were any. If there are any ripe secrets, delete.
 						PickedRipeSecrets := PickRipeSecrets(last, list)
 						HarvestRipeSecrets(PickedRipeSecrets, newConfig)
