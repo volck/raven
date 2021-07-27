@@ -34,3 +34,13 @@ func sleep() {
 	time.Sleep(time.Duration(sleepTime) * time.Second)
 	log.WithFields(log.Fields{"sleepTime": sleepTime}).Debug("Sleep done.")
 }
+
+func SliceContainsString(slice []interface{}, val string) bool {
+	for _, item := range slice {
+		if item == val {
+			return true
+		}
+	}
+	return false
+}
+

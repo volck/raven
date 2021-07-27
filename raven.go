@@ -83,19 +83,6 @@ func WriteErrorToTerminationLog(errormsg string) {
 }
 
 /*
-   Alive checks for differences between two arrays
-*/
-
-func Alive(slice []interface{}, val string) bool {
-	for _, item := range slice {
-		if item == val {
-			return true
-		}
-	}
-	return false
-}
-
-/*
 scaffolding for k8s,
 createK8sSecret generates k8s secrets based on inputs:
 - name: name of secret

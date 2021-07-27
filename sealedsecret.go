@@ -125,8 +125,8 @@ func listsMatch(PreviousKV *api.Secret, NewKV *api.Secret) bool {
 
 func findRipeSecrets(PreviousKV *api.Secret, NewKV *api.Secret) (RipeSecrets []string) {
 	for _, v := range PreviousKV.Data["keys"].([]interface{}) {
-		isAlive := Alive(NewKV.Data["keys"].([]interface{}), v.(string))
-		if !isAlive {
+		containsString := SliceContainsString(NewKV.Data["keys"].([]interface{}), v.(string))
+		if !containsString {
 			log.WithFields(log.Fields{"PreviousKV.Data": PreviousKV.Data}).Debug("PickRipeSecrets: We have found a ripe secret. adding it to list of ripesecrets now.")
 			log.WithFields(log.Fields{"RipeSecret": v.(string)}).Info("PickRipeSecrets: We have found a ripe secret. adding it to list of ripesecrets now.")
 			RipeSecrets = append(RipeSecrets, v.(string))
