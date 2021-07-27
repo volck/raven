@@ -58,8 +58,9 @@ ensurePathandreturnWritePath:
 makes sure that basePath exists for SerializeAndWriteToFile, returning basePath.
 */
 
-func ensurePathandreturnWritePath(clonePath string, destEnv string, secretName string) (basePath string) {
-	base := filepath.Join(clonePath, "declarative", destEnv, "sealedsecrets")
+func ensurePathandreturnWritePath(config config, secretName string) (basePath string) {
+
+	base := filepath.Join(config.clonePath, "declarative", config.destEnv, "sealedsecrets")
 	os.MkdirAll(base, os.ModePerm)
 	basePath = base + "/" + secretName + ".yaml"
 	return

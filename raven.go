@@ -271,7 +271,7 @@ func main() {
 							SealedSecret, SingleKVFromVault := getKVAndCreateSealedSecret(client, newConfig, secret.(string))
 
 							//ensure that path exists in order to write to it later.
-							newBase := ensurePathandreturnWritePath(newConfig.clonePath, newConfig.destEnv, secret.(string))
+							newBase := ensurePathandreturnWritePath(newConfig, secret.(string))
 							if _, err := os.Stat(newBase); os.IsNotExist(err) {
 								log.WithFields(log.Fields{"SealedSecret": secret.(string)}).Info(`Creating Sealed Secret`)
 								SerializeAndWriteToFile(SealedSecret, newBase)

@@ -19,7 +19,7 @@ func forceRefresh(wg *sync.WaitGroup) {
 	}
 	for _, secret := range list.Data["Keys"].([]string) {
 		SealedSecret, _ := getKVAndCreateSealedSecret(client,newConfig, secret)
-		newBase := ensurePathandreturnWritePath(newConfig.clonePath, newConfig.destEnv, secret)
+		newBase := ensurePathandreturnWritePath(newConfig, secret)
 		SerializeAndWriteToFile(SealedSecret, newBase)
 		log.WithFields(log.Fields{"secret": secret, "newBase": newBase}).Info("forceRefresh() rewrote secret")
 	}
