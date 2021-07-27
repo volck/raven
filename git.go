@@ -3,9 +3,11 @@ package main
 import (
 	"fmt"
 	"github.com/go-git/go-git/v5/plumbing"
+	"io/fs"
 	"io/ioutil"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -259,4 +261,51 @@ func plainClone(config config, options *git.CloneOptions) {
 	}
 	log.WithFields(log.Fields{"repo": config.repoUrl}).Info("Raven successfully cloned repository")
 
+}
+
+func getBaseListOfFiles() ([]fs.FileInfo, error) {
+	base := filepath.Join(newConfig.clonePath, "declarative", newConfig.destEnv, "sealedsecrets")
+	files, err := ioutil.ReadDir(base)
+	if err != nil {
+		log.WithFields(log.Fields{"error": err}).Error("ioutil.ReadDir() error")
+	}
+	return files, err
+}
+
+func removeFileFromWorktree(path string, worktree *git.Worktree) {
+	_, err := worktree.Remove(path)
+	if err != nil {
+		log.WithFields(log.Fields{"err": err}).Error("removeFromWorktree remove failed")
+	}
+}
+
+func removeFilesFromWorkTree(files []fs.FileInfo, worktree *git.Worktree) *git.Worktree {
+	for _, f := range files {
+		absolutePath := makeAbsolutePath(newConfig, f)
+		removeFileFromWorktree(absolutePath, worktree)
+		log.WithFields(log.Fields{"absolutePath": absolutePath, "ripeSecret": f.Name()}).Info("HarvestRipeSecrets found ripe secret. marked for deletion")
+	}
+	return worktree
+}
+
+func cleanDeadEntries() {
+	log.Info("list is nil. We should check if we have a directory full of files that should be deleted from git.")
+	repository := InitializeGitRepo(newConfig)
+	worktree := initializeWorkTree(repository)
+	files, _ := getBaseListOfFiles()
+
+	if len(files) > 0 {
+		removeFilesFromWorkTree(files, worktree)
+		status, _ := getGitStatus(worktree)
+
+		if !status.IsClean() {
+
+			log.WithFields(log.Fields{"worktree": worktree, "status": status}).Debug("HarvestRipeSecret !status.IsClean() ")
+
+			commit, _ := makeCommit(worktree, "Raven Removed ripe secret(s) from git")
+			setPushOptions(newConfig, repository, commit)
+		}
+	}
+	log.Info("Going to sleep now.")
+	time.Sleep(30 * time.Second)
 }
