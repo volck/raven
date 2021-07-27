@@ -3,17 +3,14 @@ package main
 import (
 	"flag"
 	"fmt"
-	"math/rand"
 	"os"
 
 	"github.com/hashicorp/vault/api"
 
-	"path/filepath"
-	"strings"
-	"time"
-
 	log "github.com/sirupsen/logrus"
 	"k8s.io/api/core/v1"
+	"path/filepath"
+	"strings"
 )
 
 func init() {
@@ -223,18 +220,7 @@ func main() {
 
 						// we save last state of previous list.
 						last = list
-
-						// calculate random sleep between 15 and 30 seconds
-						rand.Seed(time.Now().UnixNano())
-						max := 30
-						min := 15
-						sleepTime := rand.Intn(max-min) + min
-
-						//now we sleep randomly
-						log.WithFields(log.Fields{"sleepTime": sleepTime}).Debug("Going to sleep.")
-						time.Sleep(time.Duration(sleepTime) * time.Second)
-						log.WithFields(log.Fields{"sleepTime": sleepTime}).Debug("Sleep done.")
-
+						sleep()
 					}
 				}
 			}
