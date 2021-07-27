@@ -162,3 +162,6 @@ func TestCompareThatSealedSecretAndSecretMetadataMatches(t *testing.T) {
 	fmt.Printf("sealedsecret.name: %v \n k8s.name: %v \n", SealedSecret.Name, k8sSecret.Name )
 
 }
+
+
+
