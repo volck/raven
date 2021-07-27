@@ -194,7 +194,8 @@ func main() {
 					if list == nil {
 						cleanDeadEntries()
 					} else {
-						for _, secret := range list.Data["keys"].([]interface{}) {
+						secretList := list.Data["keys"].([]interface{})
+						for _, secret := range secretList {
 
 							log.WithFields(log.Fields{"secret": secret}).Debug("Checking secret")
 							//make SealedSecrets
