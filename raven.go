@@ -3,18 +3,15 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"math/rand"
 	"os"
 
-	git "github.com/go-git/go-git/v5"
 	"github.com/hashicorp/vault/api"
 
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/go-git/go-git/v5/plumbing/object"
 	log "github.com/sirupsen/logrus"
 	"k8s.io/api/core/v1"
 )
@@ -195,74 +192,7 @@ func main() {
 						log.WithFields(log.Fields{"error": err}).Error("getAllKVs list error")
 					}
 					if list == nil {
-						log.Info("list is nil. We should check if we have a directory full of files that should be deleted from git.")
-
-						base := filepath.Join(newConfig.clonePath, "declarative", newConfig.destEnv, "sealedsecrets")
-						files, err := ioutil.ReadDir(base)
-						if err != nil {
-							log.WithFields(log.Fields{"error": err}).Error("ioutil.ReadDir() error")
-						}
-
-						r, err := git.PlainOpen(newConfig.clonePath)
-						if err != nil {
-							log.WithFields(log.Fields{"err": err}).Info("HarvestRipeSecrets plainopen failed")
-						}
-						w, err := r.Worktree()
-						if err != nil {
-							log.WithFields(log.Fields{"err": err}).Info("HarvestRipeSecrets worktree failed")
-						}
-						if len(files) > 0 {
-							for _, f := range files {
-								base := filepath.Join("declarative", newConfig.destEnv, "sealedsecrets")
-								newbase := base + "/" + f.Name()
-								_, err = w.Remove(newbase)
-								if err != nil {
-									log.WithFields(log.Fields{"err": err}).Error("HarvestRipeSecrets worktree.Remove failed")
-								}
-								log.WithFields(log.Fields{"path": newbase, "ripeSecret": f.Name()}).Info("HarvestRipeSecrets found ripe secret. marked for deletion")
-
-							}
-							status, err := w.Status()
-							if err != nil {
-								log.WithFields(log.Fields{"status": status}).Info("Worktree.status failed")
-							}
-
-							if !status.IsClean() {
-
-								log.WithFields(log.Fields{"worktree": w, "status": status}).Info("HarvestRipeSecret !status.IsClean() ")
-
-								commit, err := w.Commit(fmt.Sprintf("Raven removed ripe secret from git"), &git.CommitOptions{
-									Author: &object.Signature{
-										Name:  "Raven",
-										Email: "itte@tæll.no",
-										When:  time.Now(),
-									},
-								})
-
-								if strings.HasPrefix(newConfig.repoUrl, "ssh:") {
-									err = r.Push(&git.PushOptions{Auth: setSSHConfig()})
-									if err != nil {
-										panic(err)
-									}
-								} else {
-									err = r.Push(&git.PushOptions{})
-									if err != nil {
-										log.WithFields(log.Fields{"error": err}).Error("Raven gitPush error")
-									}
-									// Prints the current HEAD to verify that all worked well.
-									obj, err := r.CommitObject(commit)
-									fmt.Println("head: ", obj)
-
-									if err != nil {
-										log.WithFields(log.Fields{"obj": obj}).Error("git show -s")
-									}
-									log.WithFields(log.Fields{"obj": obj}).Info("git show -s: commit")
-									genericPostWebHook()
-								}
-							}
-						}
-						log.Info("Going to sleep now.")
-						time.Sleep(30 * time.Second)
+						cleanDeadEntries()
 					} else {
 						for _, secret := range list.Data["keys"].([]interface{}) {
 
