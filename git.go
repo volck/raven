@@ -51,8 +51,8 @@ func loadSSHKey() (sshKey []byte) {
 func setSigner(sshKey []byte) (signer ssh.Signer) {
 	signer, err := ssh.ParsePrivateKey(sshKey)
 	if err != nil {
-		WriteErrorToTerminationLog("setSSHConfig: unable to read private key")
 		log.WithFields(log.Fields{"err": err}).Fatal("setSSHConfig: ParsePrivateKey err")
+		WriteErrorToTerminationLog("setSSHConfig: unable to read private key")
 	}
 	return signer
 }
@@ -243,8 +243,8 @@ func setCloneOptions(config config) (cloneOptions *git.CloneOptions) {
 		//we set up config for ssh with keys. we expect ssh://somehost/some/repo.git
 		cloneOptions = setSSHCloneOptions(config)
 	} else {
-		WriteErrorToTerminationLog(fmt.Sprintf("Raven could not determine clone options(%s)", config.repoUrl))
 		log.WithFields(log.Fields{"config.RepoUrl": config.repoUrl}).Fatalf("Raven could not determine clone options")
+		WriteErrorToTerminationLog(fmt.Sprintf("Raven could not determine clone options(%s)", config.repoUrl))
 	}
 	return cloneOptions
 }

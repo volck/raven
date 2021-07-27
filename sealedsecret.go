@@ -27,16 +27,17 @@ func readSealedSecretAndCompareWithVaultStruct(secret string, kv *api.Secret, fi
 	//grab SealedSecret file
 	data, err := ioutil.ReadFile(filepointer)
 	if err != nil {
-		WriteErrorToTerminationLog(err.Error())
 		log.WithFields(log.Fields{"filepointer": filepointer, "error": err.Error()}).Error("readSealedSecretAndCompareWithVaultStruct.ioutil.ReadFile")
+		WriteErrorToTerminationLog(err.Error())
 
 	}
 	//unmarshal it into a interface
 	v := make(map[string]interface{})
 	err = yaml.Unmarshal(data, &v)
 	if err != nil {
-		WriteErrorToTerminationLog(err.Error())
 		log.WithFields(log.Fields{"data": data, "v": v, "error": err.Error()}).Fatal("readSealedSecretAndCompareWithVaultStruct.YAML.Unmarshal")
+
+		WriteErrorToTerminationLog(err.Error())
 	}
 	// hacky way of getting variable
 	if _, ok := v["metadata"]; ok {
@@ -104,14 +105,13 @@ func firstRun(PreviousKV *api.Secret, NewKV *api.Secret) bool {
 	return validator
 }
 
-func listsEmpty(PreviousKV *api.Secret, NewKV *api.Secret)(bool) {
+func listsEmpty(PreviousKV *api.Secret, NewKV *api.Secret) bool {
 	emptyList := false
-	if NewKV == nil || PreviousKV == nil{
+	if NewKV == nil || PreviousKV == nil {
 		emptyList = true
 	}
 	return emptyList
 }
-
 
 func listsMatch(PreviousKV *api.Secret, NewKV *api.Secret) bool {
 	validator := false

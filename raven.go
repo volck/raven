@@ -79,7 +79,7 @@ func WriteErrorToTerminationLog(errormsg string) {
 	defer file.Close()
 
 	file.WriteString(errormsg)
-
+	os.Exit(1)
 }
 
 /*
@@ -208,7 +208,6 @@ func main() {
 		} else {
 			log.WithFields(log.Fields{"token": token}).Warn("Token is invalid, need to update. ")
 			WriteErrorToTerminationLog("[*] token is invalid, someone needs to update this![*]")
-			os.Exit(1)
 		}
 	}
 }
