@@ -14,9 +14,7 @@ HarvestRipeSecrets() checks local files based on RipeSecrets returned from PickR
 
 */
 func HarvestRipeSecrets(RipeSecrets []string, config config) {
-	if len(RipeSecrets) == 0 {
-	} else {
-
+	if len(RipeSecrets) > 0 {
 		repo := InitializeGitRepo(config)
 		worktree := initializeWorkTree(repo)
 		iterateRipeSecretsAndRemoveFromWorkingtree(RipeSecrets, worktree, config)
