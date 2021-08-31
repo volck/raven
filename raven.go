@@ -149,7 +149,7 @@ func main() {
 			log.WithFields(log.Fields{"config": newConfig}).Fatal("failed to initialize client")
 
 		}
-		if validateSelftoken(client) {
+		if validToken(client) {
 
 			// start webserver
 			go handleRequests()
@@ -163,13 +163,12 @@ func main() {
 			}
 
 			GitClone(newConfig)
-			last := &api.Secret{}
+			State := &api.Secret{}
 			if err != nil {
 				log.WithFields(log.Fields{"error": err}).Error("client not initialized")
-
 			}
 			for {
-				if validateSelftoken(client) {
+				if validToken(client) {
 					log.WithFields(log.Fields{}).Debug("Validated Token: grabbing list of secrets")
 					var list, err = getAllKVs(client, newConfig)
 					if err != nil {
@@ -181,13 +180,12 @@ func main() {
 						secretList := list.Data["keys"].([]interface{})
 						persistVaultChanges(secretList, client)
 						//..and push new files if there were any. If there are any ripe secrets, delete.
-						PickedRipeSecrets := PickRipeSecrets(last, list)
+						PickedRipeSecrets := PickRipeSecrets(State, list)
 						HarvestRipeSecrets(PickedRipeSecrets, newConfig)
 						gitPush(newConfig)
 						log.WithFields(log.Fields{"PickedRipeSecrets": PickedRipeSecrets}).Debug("PickedRipeSecrets list")
 
-						// we save last state of previous list.
-						last = list
+						State = list
 						sleep()
 					}
 				}

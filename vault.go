@@ -108,11 +108,7 @@ func RenewSelfToken(token string, vaultEndpoint string) {
 
 }
 
-/* validateSelftoken() takes token as input,
-returns false if tokens has errors or is invalid.
-*/
-
-func validateSelftoken(client *api.Client) (valid bool) {
+func validToken(client *api.Client) (valid bool) {
 
 	_, err := client.Auth().Token().LookupSelf()
 	if err != nil {

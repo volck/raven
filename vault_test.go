@@ -65,7 +65,7 @@ func TestValidateSelfToken(t *testing.T) {
 	defer cluster.Cleanup()
 	client := cluster.Cores[0].Client
 	fmt.Println("proof of TestvalidateSelftoken")
-	valid := validateSelftoken(client)
+	valid := validToken(client)
 	if !valid {
 		t.Error("valid:", valid, client.Token())
 	}
