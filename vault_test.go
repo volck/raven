@@ -9,7 +9,6 @@ import (
 	kv "github.com/hashicorp/vault-plugin-secrets-kv"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
-	"strings"
 	"testing"
 
 	"github.com/hashicorp/vault/api"
@@ -24,16 +23,17 @@ func TestGetAllKVs(t *testing.T) {
 	cluster := createVaultTestCluster(t)
 	defer cluster.Cleanup()
 	client := cluster.Cores[0].Client
-
-	// make testable secrets for cluster
-	secrets := map[string]interface{}{
-		"data":     map[string]interface{}{"secretKey": "secretValue"},
-		"metadata": map[string]interface{}{"version": 2},
+	config := config{
+		vaultEndpoint: cluster.Cores[0].Client.Address(),
+		secretEngine:  "kv",
+		token:         client.Token(),
+		destEnv:       "kv",
+		pemFile:       "cert.pem",
 	}
-	client.Logical().Write("kv/data/secret", secrets)
-
+	secretName := "secretsecretsecret"
+	generateTestSecrets(t, client, config, secretName)
 	// Pass the client to the code under test.
-	_, err := getAllKVs(client, "secret", client.Token())
+	_, err := getAllKVs(client, config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,157 +65,14 @@ func TestValidateSelfToken(t *testing.T) {
 	defer cluster.Cleanup()
 	client := cluster.Cores[0].Client
 	fmt.Println("proof of TestvalidateSelftoken")
-	valid := validateSelftoken(client)
+	valid := validToken(client)
 	if !valid {
 		t.Error("valid:", valid, client.Token())
 	}
 
 }
 
-func TestCreatek8sSecret(t *testing.T) {
-	t.Parallel()
-	cluster := createVaultTestCluster(t)
-	defer cluster.Cleanup()
-	client := cluster.Cores[0].Client
 
-	// make testable secrets for cluster
-	secrets := map[string]interface{}{
-		"data":     map[string]interface{}{"secretKey": "secretValue"},
-		"metadata": map[string]interface{}{"version": 2},
-	}
-	client.Logical().Write("kv/data/secret", secrets)
-
-	singleSecret := getSingleKV(client, "kv", "secret")
-	k8sSecret := createK8sSecret("secret", "kv", "kv", singleSecret)
-	if k8sSecret.Data == nil && k8sSecret.StringData == nil {
-		t.Fatal("k8sSecret nil, data not loaded")
-	}
-	fmt.Println("k8sSecret", k8sSecret)
-}
-
-func TestCreatek8sSecretwWithBase64Data(t *testing.T) {
-	// init client
-	t.Parallel()
-	cluster := createVaultTestCluster(t)
-	defer cluster.Cleanup()
-	client := cluster.Cores[0].Client
-
-	//create base64Datasecret
-	b64DataSecret := map[string]interface{}{
-		"data": map[string]interface{}{"b64secretData": `base64:LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUZWekNDQXorZ0F3SUJBZ0lKQU9MTEw2V2Va
-b0VrTUEwR0NTcUdTSWIzRFFFQkN3VUFNRUl4Q3pBSkJnTlYKQkFZVEFsaFlNUlV3RXdZRFZRUUhE
-QXhFWldaaGRXeDBJRU5wZEhreEhEQWFCZ05WQkFvTUUwUmxabUYxYkhRZwpRMjl0Y0dGdWVTQk1k
-R1F3SGhjTk1qRXdOekF4TURVek16UXpXaGNOTWpJd056QXhNRFV6TXpReldqQkNNUXN3CkNRWURW
-UVFHRXdKWVdERVZNQk1HQTFVRUJ3d01SR1ZtWVhWc2RDQkRhWFI1TVJ3d0dnWURWUVFLREJORVpX
-WmgKZFd4MElFTnZiWEJoYm5rZ1RIUmtNSUlDSWpBTkJna3Foa2lHOXcwQkFRRUZBQU9DQWc4QU1J
-SUNDZ0tDQWdFQQp0bGpEVEhibkJ0NlNJcDBRMW01RC9tbW9MdnJoeWJRRDFBa1VHTDVrSjhZcmdZ
-OG5JSjM2bWRxemhma3dlcVViCkRPUzhOcEpzcHhjdlgyZWlRS1k5TWM1Vm9xa25FMC9lM1doRWdK
-RndYYmRqREppdUlLNS8vcjFPM1NpKzArSWUKRUo1WWx3OWFYR0lJOWs0V1d0REFMMktlY1JrNWc5
-VFlmTzdwRjd4TGRjUlhCcWNIbCszbUxDVnFQYXFpNEY3bgpnVDhwRjBtOG9HOHdCMXNvNzN1RFlt
-NkRJd0VTVk55VytBL21oMGRZbk8rTHZaVURCb1pFaUcxMUdXTDY1bzBXClJwejZ1STYwRTR0NEVP
-ZEt1UFBwM0FueHVHWnk5TzlZTWdJVHpUQjFSazJOOGxPT25jRzZtanRTN0cyZFRhOEMKVVJxc2pu
-RldxZEpLRHNsTFhhWk05eEo3d3pVeStpaE5SKy91UEZKSXpEVXlFMVRNQjZGSDdLcysrQ0lzTm9N
-VwpydFN4ckM4MlZ2UTdVSkViaGJ5azRqNXhWSzhWYk43M0dJOXNwN21mR0dBQnJKT2RkYTU5R0Yx
-bUJHYllsMHdWCndvY2lIanozWjhMWXZKNXpCQjNSS1JGT1NGUXc3RTI3QzR0dXNXNTk3T2Z5MCta
-R0VqQnR0QTZwV25BZjMzZ2sKTVVQMTYwczdTTGJ1dUNER2l2VmhDNlhkMDBJbTh0NGFmRUwxYmx6
-M2tWd3pKR1ZMME94OFlSaUpROUY5czYycwpvRHdJNERPWHN5dTV2dUkxRmVXSVRRendxdnpXZjJR
-VkM3NmVyR21xa00zcFdnUURtVHoyalNzbCt3ZS9BK1dCCmtUY0RiYXFuVWN6d0RUM2pMeXRleFVR
-KzFpcUIxb3VjeXA0UUk5RnJ3ajhDQXdFQUFhTlFNRTR3SFFZRFZSME8KQkJZRUZPamk5SWJIVzFx
-VFEwWHFyQlBHLzY2MlBJYkFNQjhHQTFVZEl3UVlNQmFBRk9qaTlJYkhXMXFUUTBYcQpyQlBHLzY2
-MlBJYkFNQXdHQTFVZEV3UUZNQU1CQWY4d0RRWUpLb1pJaHZjTkFRRUxCUUFEZ2dJQkFDdXQvVmMw
-CktLK0tPQ0xNU0JxbnFzaUppZW1FdUpEYXlKMFp3akpQT3JjSXJtY1FvcTdJODJDZ1pEeEMvK3Uy
-aXVLc0JzU2oKMHF1aWpLRVhvcDg2QjkwZWFBVjUwcXRtZHpiNW84YTdwTFF2MmxHUGhreHVVcTR6
-Ylk4Rkx4ZmhmMnBhQk5YTgpHM0ZPZU9wMkgxSWJkSWZyOVptL0x1UjkwQmJ3Mmh3SkVKSFNiTjZl
-STE3ZFJwaVBFdlVuY09kS0M5Z1dFdVd2CjVNMkU5c1creS9TOU1LSEdkSWJCNjBLMjA1WjZrS1hx
-ckNnWlg5Q1NNc3YwUDNoaFVqQmFCQWtmV0hQUU9BdVUKSG5yb2J5UG9kMmltN1RwZXdMZ1VvM1V5
-UlVXT2lxdjNaMjZpZnZLNS8xNzJKaHFBRVpTTFQ3N095YkZIdzdPMApLc1VCVlBlQ3huWlhQNGlx
-eWhYNHRoMkpXUHljaXlqTXB4TzhSd3hYKzBhVnErZnJYZmNrM0laalRqOSt4blI2Cld5RnlGVVZP
-Z2VhOElzRXZReVo5WllOUVJKYWxkYnhZb0N5eGs1NFYydTdIdDUyU2hJWEtaam5INms3YVBTa2MK
-c1FuUEc0THJRell3K3d1REtPTDZNZXpSbURsYzhvaHo5MVZrem9JVytxcXY5VTBUS3hjWCtGN01X
-YkJCNjBoQgpVcVJoejVzY2Zmem5pdUJqNHJzdkcvQlRlR2NFVnZzSVZwRE5oRmF2OFNUaWYzNVB0
-L1drYUxSaTh4OWVObElXCmRQZTc2anNVVHFMeTBDeVVtSDZDWk5ObTVKUVlIRzlBd3hUUkJiMCtU
-Ri9YQklaeCtFU1VOcUlDR0JrV0hvNDUKZEpGM0UvN09NellDT1hEQ3lNR1lQZzBMQlJGNEJBM2tW
-emxMCi0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
-`},
-		"metadata": map[string]interface{}{"version": 2},
-	}
-	// write testobject
-	client.Logical().Write("kv/data/b64data", b64DataSecret)
-	singleSecret := getSingleKV(client, "kv", "b64data")
-	k8sSecret := createK8sSecret("b64data", "kv", "kv", singleSecret)
-	for _, v := range k8sSecret.Data {
-		if strings.Contains(string(v), "base64") {
-			t.Fatal("base64 not trimmed")
-		}
-
-	}
-
-}
-
-func TestGetKVAndCreateNormalSealedSecret(t *testing.T) {
-	t.Parallel()
-
-	cluster := createVaultTestCluster(t)
-	defer cluster.Cleanup()
-	client := cluster.Cores[0].Client
-
-	// make testable secrets for cluster
-	secrets := map[string]interface{}{
-		"data":     map[string]interface{}{"secretKey": "secretValue"},
-		"metadata": map[string]interface{}{"version": 2},
-	}
-	client.Logical().Write("kv/data/secret", secrets)
-
-	secretEngine := "kv"
-	secretName := "secret"
-	destEnv := "kv"
-	pemFile := `cert.crt`
-
-	SingleKVFromVault := getSingleKV(client, secretEngine, secretName)
-	k8sSecret := createK8sSecret(secretName, destEnv, secretEngine, SingleKVFromVault)
-	SealedSecret := createSealedSecret(pemFile, &k8sSecret)
-	fmt.Println(SealedSecret)
-
-}
-
-func TestGetKVAndCreateSealedSecretWithDocumentKeysAnnotations(t *testing.T) {
-	t.Parallel()
-	// Initiate cluster and get client
-	cluster := createVaultTestCluster(t)
-	defer cluster.Cleanup()
-	client := cluster.Cores[0].Client
-
-	secrets := map[string]interface{}{
-		"data":     map[string]interface{}{"totallyDifferent": "secretValue", "raven/description": "some very secret secret that we need to use to make world go around"},
-		"metadata": map[string]interface{}{"version": 2},
-	}
-	//make secret with raven/description field to see if DocumentKeys are working
-
-	client.Logical().Write("kv/data/DocumentKeyAnnotation", secrets)
-
-	secretEngine := "kv"
-	secretName := "DocumentKeyAnnotation"
-	destEnv := "kv"
-	pemFile := `cert.crt`
-
-	SingleKVFromVault := getSingleKV(client, secretEngine, secretName)
-	k8sSecret := createK8sSecret(secretName, destEnv, secretEngine, SingleKVFromVault)
-	SealedSecret := createSealedSecret(pemFile, &k8sSecret)
-	seen := false
-
-	//iterate keys to see if documentKeys are present
-	for keySealedSecret, _ := range SealedSecret.Annotations {
-		for i := range newConfig.DocumentationKeys {
-			if newConfig.DocumentationKeys[i] == keySealedSecret {
-				seen = true
-			}
-		}
-	}
-	if !seen {
-		t.Fatal("TestGetKVAndCreateSealedSecretWithDocumentKeysAnnotations failed. Seen:", seen)
-	}
-
-}
 
 func ReturnPrivateKey(t *testing.T) map[string]*rsa.PrivateKey {
 	t.Helper()
@@ -285,7 +142,8 @@ GcBNYzovELWgwrTkcln68AOhJ5cRqQav/yWnTyyd6wlmtSR7nOnqKx32Uw==
 	return privateKeys
 }
 
-func generateTestSecrets(t *testing.T, client *api.Client,secretEngine string, secretName string, destEnv string, pemFile string) {
+
+func generateTestSecrets(t *testing.T, client *api.Client, config config, secretName string) {
 	t.Helper()
 
 	// make testable secrets for cluster
@@ -293,8 +151,17 @@ func generateTestSecrets(t *testing.T, client *api.Client,secretEngine string, s
 		"data":     map[string]interface{}{"secretKey": "secretValue"},
 		"metadata": map[string]interface{}{"version": 2},
 	}
+	writePath := fmt.Sprintf("%s/data/%s", config.secretEngine, secretName)
+	client.Logical().Write(writePath, secrets)
 
-	client.Logical().Write("kv/data/secret", secrets)
+}
+
+func deleteTestSecrets(t *testing.T, client *api.Client, config config, secretName string) {
+	t.Helper()
+	dataPath := fmt.Sprintf("%s/data/%s", config.secretEngine, secretName)
+	client.Logical().Delete(dataPath)
+	metadataPath := fmt.Sprintf("%s/metadata/%s", config.secretEngine, secretName)
+	client.Logical().Delete(metadataPath)
 
 }
 
@@ -304,9 +171,16 @@ func ReadConvertKVFromVault(t *testing.T, client *api.Client, secretEngine strin
 	cluster := createVaultTestCluster(t)
 	defer cluster.Cleanup()
 	client = cluster.Cores[0].Client
-	generateTestSecrets(t, client, secretName, secretName, destEnv, pemFile)
+
+	config := config{
+		vaultEndpoint: cluster.Cores[0].Client.Address(),
+		secretEngine:  "kv",
+		token:         client.Token(),
+		destEnv:       "kv",
+	}
+	generateTestSecrets(t, client, config, secretName)
 	SingleKVFromVault := getSingleKV(client, secretEngine, secretName)
-	k8sSecret := createK8sSecret(secretName, destEnv, secretEngine, SingleKVFromVault)
+	k8sSecret := createK8sSecret(secretName, config, SingleKVFromVault)
 	SealedSecret := createSealedSecret(pemFile, &k8sSecret)
 	return SealedSecret, k8sSecret
 }
@@ -321,40 +195,78 @@ func UnsealSecretAndReturn(t *testing.T, SealedSecret *sealedSecretPkg.SealedSec
 	return UnsealedSecret
 }
 
-func CompareSealedAndK8sSecrets(t *testing.T, UnsealedSecret *v1.Secret, k8sSecret v1.Secret) (valid bool) {
-	for UnsealedSecretKey, UnsealedSecretValue := range UnsealedSecret.Data {
-		for k8sKey, k8sValue := range k8sSecret.StringData {
-			if UnsealedSecretKey == k8sKey && k8sValue == string(UnsealedSecretValue) {
-				valid = true
-			}
-		}
-	}
-	return valid
-}
-
-func TestSealedSecretMatchk8sSecret(t *testing.T) {
-	t.Parallel()
+func TestPickRipeSecretsReturnsOne(t *testing.T) {
 	cluster := createVaultTestCluster(t)
 	defer cluster.Cleanup()
 	client := cluster.Cores[0].Client
-	secretEngine := "kv"
-	secretName := "secret"
-	destEnv := "kv"
-	pemFile := `cert.pem`
 
-	generateTestSecrets(t, client, secretName, secretName, destEnv, pemFile)
-	//we need to unseal sealedsecret and compare it to a k8sSecret
-	SealedSecret, k8sSecret := ReadConvertKVFromVault(t, client, secretEngine, secretName, destEnv, pemFile)
-	var codecs serializer.CodecFactory
-
-	privateKeys := ReturnPrivateKey(t)
-
-	UnsealedSecret := UnsealSecretAndReturn(t, SealedSecret, codecs, privateKeys)
-	if !CompareSealedAndK8sSecrets(t, UnsealedSecret, k8sSecret) {
-		t.Fatal("verifying failed")
+	config := config{
+		vaultEndpoint: cluster.Cores[0].Client.Address(),
+		secretEngine:  "kv",
+		token:         client.Token(),
+		destEnv:       "kv",
+		pemFile:       "cert.pem",
 	}
 
+	secretName := "secret"
+	secretNameTwo := "secrettwo"
+	generateTestSecrets(t, client, config, secretName)
+	generateTestSecrets(t, client, config, secretNameTwo)
+
+	PreviousKV, err := getAllKVs(client, config)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	deleteTestSecrets(t, client, config, secretName)
+
+	newKV, err := getAllKVs(client,config)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	picked := PickRipeSecrets(PreviousKV, newKV)
+	fmt.Println(picked, len(picked))
+	if len(picked) == 0 {
+		t.Fatal("PickRipeSecrets should have returned 1 here")
+	}
 }
+
+func TestPickRipeSecretsReturnsNoRipe(t *testing.T) {
+	cluster := createVaultTestCluster(t)
+	defer cluster.Cleanup()
+	client := cluster.Cores[0].Client
+
+	config := config{
+		vaultEndpoint: cluster.Cores[0].Client.Address(),
+		secretEngine:  "kv",
+		token:         client.Token(),
+		destEnv:       "kv",
+		pemFile:       "cert.pem",
+	}
+
+	secretName := "secret"
+	secretNameTwo := "secrettwo"
+	generateTestSecrets(t, client, config, secretName)
+	generateTestSecrets(t, client, config, secretNameTwo)
+
+	PreviousKV, err := getAllKVs(client,config)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	newKV, err := getAllKVs(client, config)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	picked := PickRipeSecrets(PreviousKV, newKV)
+	fmt.Println(picked, len(picked))
+	if len(picked) != 0 {
+		t.Fatal("PickRipeSecrets should have returned 1 here")
+	}
+}
+
 
 func createVaultTestCluster(t *testing.T) *hashivault.TestCluster {
 
@@ -382,3 +294,4 @@ func createVaultTestCluster(t *testing.T) *hashivault.TestCluster {
 
 	return cluster
 }
+

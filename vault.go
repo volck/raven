@@ -2,9 +2,9 @@ package main
 
 import (
 	"fmt"
+	"github.com/go-git/go-git/v5"
 	"net/http"
-
-	"reflect"
+	"path/filepath"
 
 	sealedSecretPkg "github.com/bitnami-labs/sealed-secrets/pkg/apis/sealed-secrets/v1alpha1"
 	"github.com/hashicorp/vault/api"
@@ -36,60 +36,41 @@ getKVAndCreateSealedSecret combines several "maker-methods":
 * return KV object in order to compare later.
 
 */
-func getKVAndCreateSealedSecret(client *api.Client,secretEngine string, secretName string, token string, destEnv string, pemFile string) (SealedSecret *sealedSecretPkg.SealedSecret, SingleKVFromVault *api.Secret) {
-	SingleKVFromVault = getSingleKV(client,secretEngine, secretName)
+
+func getKVAndCreateSealedSecret(client *api.Client, config config, secretName string) (SealedSecret *sealedSecretPkg.SealedSecret, SingleKVFromVault *api.Secret) {
+
+	SingleKVFromVault = getSingleKV(client, config.secretEngine, secretName)
 	log.WithFields(log.Fields{"SingleKVFromVault": SingleKVFromVault}).Debug("getKVAndCreateSealedSecret.SingleKVFromVault")
-	k8sSecret := createK8sSecret(secretName, destEnv, secretEngine, SingleKVFromVault)
+	k8sSecret := createK8sSecret(secretName, newConfig, SingleKVFromVault)
 	log.WithFields(log.Fields{"k8sSecret": k8sSecret}).Debug("getKVAndCreateSealedSecret.k8sSecret")
-	SealedSecret = createSealedSecret(pemFile, &k8sSecret)
+	SealedSecret = createSealedSecret(newConfig.pemFile, &k8sSecret)
 	log.WithFields(log.Fields{"SealedSecret": SealedSecret}).Debug("getKVAndCreateSealedSecret.SealedSecret")
 	return
 }
 
-/*
-PickRipeSecrets() uses Alive() to check if we have dead secrets
-
-*/
-
 func PickRipeSecrets(PreviousKV *api.Secret, NewKV *api.Secret) (RipeSecrets []string) {
-	log.WithFields(log.Fields{
-		"previousKeys": PreviousKV.Data["keys"],
-		"newKV":        NewKV.Data["keys"],
-	}).Debug("PickRipeSecrets is starting to compare lists")
-
-	if PreviousKV.Data["keys"] == nil || NewKV.Data["keys"] == nil {
-		// we assume this is our first run so we do not know difference yet.
-		log.WithFields(log.Fields{
-			"previousKeys": PreviousKV.Data["keys"],
-			"newKV":        NewKV.Data["keys"],
-		}).Debug("PickRipeSecrets compared lists and found that either of the lists were nil")
-
-	} else if reflect.DeepEqual(PreviousKV.Data["keys"], NewKV.Data["keys"]) {
-		log.WithFields(log.Fields{
-			"previousKeys": PreviousKV.Data["keys"],
-			"newKV":        NewKV.Data["keys"],
-		}).Debug("PickRipeSecrets: Lists match.")
-	} else {
-		for _, v := range PreviousKV.Data["keys"].([]interface{}) {
-			isAlive := Alive(NewKV.Data["keys"].([]interface{}), v.(string))
-			if !isAlive {
-				log.WithFields(log.Fields{"PreviousKV.Data": PreviousKV.Data}).Debug("PickRipeSecrets: We have found a ripe secret. adding it to list of ripesecrets now.")
-				log.WithFields(log.Fields{"RipeSecret": v.(string)}).Info("PickRipeSecrets: We have found a ripe secret. adding it to list of ripesecrets now.")
-				RipeSecrets = append(RipeSecrets, v.(string))
-				log.WithFields(log.Fields{"RipeSecret": RipeSecrets}).Debug("PickRipeSecrets final list of ripe secrets")
-			}
-		}
+	if listsEmpty(PreviousKV, NewKV) {
+	} else if !firstRun(PreviousKV, NewKV) && !listsMatch(PreviousKV, NewKV) {
+		RipeSecrets = findRipeSecrets(PreviousKV, NewKV)
 	}
-	return
+	return RipeSecrets
 }
 
-/*
-getallKvs parameters:
-enviroment(i.e qa??, dev??)
-*/
+func iterateRipeSecretsAndRemoveFromWorkingtree(RipeSecrets []string, worktree *git.Worktree, newConfig config) {
+	for ripe := range RipeSecrets {
+		base := filepath.Join("declarative", newConfig.destEnv, "sealedsecrets")
+		newbase := base + "/" + RipeSecrets[ripe] + ".yaml"
+		_, err := worktree.Remove(newbase)
+		if err != nil {
+			log.WithFields(log.Fields{"err": err}).Error("HarvestRipeSecrets worktree.Remove failed")
+		}
+		log.WithFields(log.Fields{"ripeSecret": RipeSecrets[ripe]}).Info("HarvestRipeSecrets found ripe secret. marked for deletion")
+	}
+}
 
-func getAllKVs(client *api.Client,env string, token string) (Secret *api.Secret, err error) {
-	url := env + "/metadata"
+//env string, token string
+func getAllKVs(client *api.Client, config config) (Secret *api.Secret, err error) {
+	url := config.secretEngine + "/metadata"
 
 	Secret, err = client.Logical().List(url)
 	if err != nil {
@@ -102,7 +83,7 @@ func getAllKVs(client *api.Client,env string, token string) (Secret *api.Secret,
 getsingleKV() used to iterate struct from getAllKVs(), takes secretname as input, returns struct for single secret. Requires uniform data.
 */
 
-func getSingleKV(client *api.Client,env string, secretname string) (Secret *api.Secret) {
+func getSingleKV(client *api.Client, env string, secretname string) (Secret *api.Secret) {
 	//url := vaultEndPoint + "/v1/" + env + "/data/" + secretname
 
 	path := fmt.Sprintf("%s/data/%s", env, secretname)
@@ -127,11 +108,7 @@ func RenewSelfToken(token string, vaultEndpoint string) {
 
 }
 
-/* validateSelftoken() takes token as input,
-returns false if tokens has errors or is invalid.
-*/
-
-func validateSelftoken(client *api.Client) (valid bool) {
+func validToken(client *api.Client) (valid bool) {
 
 	_, err := client.Auth().Token().LookupSelf()
 	if err != nil {

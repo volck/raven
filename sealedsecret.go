@@ -12,6 +12,7 @@ import (
 	"gopkg.in/yaml.v2"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
+	"reflect"
 )
 
 /*
@@ -26,16 +27,17 @@ func readSealedSecretAndCompareWithVaultStruct(secret string, kv *api.Secret, fi
 	//grab SealedSecret file
 	data, err := ioutil.ReadFile(filepointer)
 	if err != nil {
-		WriteErrorToTerminationLog(err.Error())
 		log.WithFields(log.Fields{"filepointer": filepointer, "error": err.Error()}).Error("readSealedSecretAndCompareWithVaultStruct.ioutil.ReadFile")
+		WriteErrorToTerminationLog(err.Error())
 
 	}
 	//unmarshal it into a interface
 	v := make(map[string]interface{})
 	err = yaml.Unmarshal(data, &v)
 	if err != nil {
-		WriteErrorToTerminationLog(err.Error())
 		log.WithFields(log.Fields{"data": data, "v": v, "error": err.Error()}).Fatal("readSealedSecretAndCompareWithVaultStruct.YAML.Unmarshal")
+
+		WriteErrorToTerminationLog(err.Error())
 	}
 	// hacky way of getting variable
 	if _, ok := v["metadata"]; ok {
@@ -92,4 +94,44 @@ func createSealedSecret(publickeyPath string, k8ssecret *v1.Secret) (sealedSecre
 	sealedSecret.TypeMeta = k8ssecret.TypeMeta
 	sealedSecret.ObjectMeta = k8ssecret.ObjectMeta
 	return
+}
+
+func firstRun(PreviousKV *api.Secret, NewKV *api.Secret) bool {
+	validator := false
+	if PreviousKV.Data["keys"] == nil || NewKV.Data["keys"] == nil {
+		log.WithFields(log.Fields{"previousKeys": PreviousKV.Data["keys"], "newKV": NewKV.Data["keys"]}).Debug("PickRipeSecrets compared lists and found that either of the lists were nil")
+		validator = true
+	}
+	return validator
+}
+
+func listsEmpty(PreviousKV *api.Secret, NewKV *api.Secret) bool {
+	emptyList := false
+	if NewKV == nil || PreviousKV == nil {
+		emptyList = true
+	}
+	return emptyList
+}
+
+func listsMatch(PreviousKV *api.Secret, NewKV *api.Secret) bool {
+	validator := false
+
+	if reflect.DeepEqual(PreviousKV.Data["keys"], NewKV.Data["keys"]) {
+		log.WithFields(log.Fields{"previousKeys": PreviousKV.Data["keys"], "newKV": NewKV.Data["keys"]}).Debug("PickRipeSecrets: Lists match.")
+		validator = true
+	}
+	return validator
+}
+
+func findRipeSecrets(PreviousKV *api.Secret, NewKV *api.Secret) (RipeSecrets []string) {
+	for _, v := range PreviousKV.Data["keys"].([]interface{}) {
+		containsString := SliceContainsString(NewKV.Data["keys"].([]interface{}), v.(string))
+		if !containsString {
+			log.WithFields(log.Fields{"PreviousKV.Data": PreviousKV.Data}).Debug("PickRipeSecrets: We have found a ripe secret. adding it to list of ripesecrets now.")
+			log.WithFields(log.Fields{"RipeSecret": v.(string)}).Info("PickRipeSecrets: We have found a ripe secret. adding it to list of ripesecrets now.")
+			RipeSecrets = append(RipeSecrets, v.(string))
+			log.WithFields(log.Fields{"RipeSecret": RipeSecrets}).Debug("PickRipeSecrets final list of ripe secrets")
+		}
+	}
+	return RipeSecrets
 }
