@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"github.com/go-git/go-git/v5/plumbing"
 	"io/fs"
 	"io/ioutil"
 	"net"
@@ -10,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/go-git/go-git/v5/plumbing"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
@@ -57,7 +58,7 @@ func setSigner(sshKey []byte) (signer ssh.Signer) {
 	return signer
 }
 
-func addtoWorktree(item string, worktree *git.Worktree) () {
+func addtoWorktree(item string, worktree *git.Worktree) {
 	_, err := worktree.Add(item)
 	if err != nil {
 		log.WithFields(log.Fields{"error": err}).Error("Raven gitPush:worktree add error")
@@ -97,7 +98,14 @@ func gitPush(config config) {
 	}
 	if !status.IsClean() {
 		log.WithFields(log.Fields{"isClean": status.IsClean()}).Debug("gitPush found that status is not clean, making commit with changes")
-		addtoWorktree(".", worktree)
+
+		validPath := filepath.Join("declarative", newConfig.destEnv, "sealedsecrets")
+		for filename := range status {
+			if strings.Contains(filename, validPath) {
+				addtoWorktree(filename, worktree)
+			}
+			// TODO: log files not added?
+		}
 
 		// We can verify the current status of the worktree using the method Status.
 		commitMessage := fmt.Sprintf("Raven updated secret in %s", config.secretEngine)
@@ -161,7 +169,7 @@ func makeCommit(worktree *git.Worktree, commitMessage string) (commit plumbing.H
 	})
 	return commit, err
 }
-func setSSHPushOptions(newconfig config, remote *git.Repository) () {
+func setSSHPushOptions(newconfig config, remote *git.Repository) {
 
 	err := remote.Push(&git.PushOptions{Auth: setSSHConfig()})
 	if err != nil {
@@ -185,14 +193,14 @@ func setHTTPSPushOptions(repository *git.Repository, commit plumbing.Hash) {
 	genericPostWebHook()
 }
 
-func setHTTPSPullOptions(worktree *git.Worktree) () {
+func setHTTPSPullOptions(worktree *git.Worktree) {
 	err := worktree.Pull(&git.PullOptions{RemoteName: "origin"})
 	if err != nil {
 		log.WithFields(log.Fields{"error": err}).Debug("Raven gitPush:Pull error")
 	}
 }
 
-func setSSHPullOptions(worktree *git.Worktree) () {
+func setSSHPullOptions(worktree *git.Worktree) {
 	err := worktree.Pull(&git.PullOptions{RemoteName: "origin", Auth: setSSHConfig()})
 	if err != nil {
 		log.WithFields(log.Fields{"error": err}).Debug("Raven gitPush:Pull error")
