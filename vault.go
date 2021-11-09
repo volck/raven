@@ -64,7 +64,7 @@ func iterateRipeSecretsAndRemoveFromWorkingtree(RipeSecrets []string, worktree *
 		if err != nil {
 			log.WithFields(log.Fields{"err": err}).Error("HarvestRipeSecrets worktree.Remove failed")
 		}
-		log.WithFields(log.Fields{"ripeSecret": RipeSecrets[ripe]}).Info("HarvestRipeSecrets found ripe secret. marked for deletion")
+		log.WithFields(log.Fields{"ripeSecret": RipeSecrets[ripe], "action": "delete"}).Info("HarvestRipeSecrets found ripe secret. marked for deletion")
 	}
 }
 
