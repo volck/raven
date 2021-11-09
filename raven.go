@@ -179,7 +179,7 @@ func main() {
 					} else {
 						secretList := list.Data["keys"].([]interface{})
 						persistVaultChanges(secretList, client)
-						//..and push new files if there were any. If there are any ripe secrets, delete.
+						//..and push new files if there were any. If there are any ripe secrets, delete.,
 						PickedRipeSecrets := PickRipeSecrets(State, list)
 						HarvestRipeSecrets(PickedRipeSecrets, newConfig)
 						gitPush(newConfig)

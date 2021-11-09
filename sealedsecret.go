@@ -42,17 +42,17 @@ func readSealedSecretAndCompareWithVaultStruct(secret string, kv *api.Secret, fi
 	// hacky way of getting variable
 	if _, ok := v["metadata"]; ok {
 		if !ok {
-			log.WithFields(log.Fields{"ok-status": ok}).Info("readSealedSecretAndCompareWithVaultStruct: we need a update here")
+			log.WithFields(log.Fields{"ok-status": ok, "action": "update"}).Info("readSealedSecretAndCompareWithVaultStruct: we need a update here")
 			NeedUpdate = true
 		}
 		SealedSecretTime := v["metadata"].(map[interface{}]interface{})["annotations"].(map[interface{}]interface{})["created_time"]
 		SealedSecretSource := v["metadata"].(map[interface{}]interface{})["annotations"].(map[interface{}]interface{})["source"]
 		if VaultTimeStamp == SealedSecretTime || SealedSecretSource != secretEngine {
-			log.WithFields(log.Fields{"VaultTimeStamp": VaultTimeStamp, "SealedSecretTime": SealedSecretTime, "SealedSecretSource": SealedSecretSource, "secretEngine": secretEngine, "NeedUpdate": NeedUpdate}).Debug("readSealedSecretAndCompareWithVaultStruct either we have a match here, or secret is from another secretengine")
+			log.WithFields(log.Fields{"VaultTimeStamp": VaultTimeStamp, "SealedSecretTime": SealedSecretTime, "SealedSecretSource": SealedSecretSource, "secretEngine": secretEngine, "action": "update"}).Debug("readSealedSecretAndCompareWithVaultStruct either we have a match here, or secret is from another secretengine")
 			return
 		} else {
 			NeedUpdate = true
-			log.WithFields(log.Fields{"secret": secret, "vaultTimestamp": VaultTimeStamp, "SealedSecretTime": SealedSecretTime, "NeedUpdate": NeedUpdate}).Info("readSealedSecretAndCompareWithVaultStruct needUpdate")
+			log.WithFields(log.Fields{"secret": secret, "vaultTimestamp": VaultTimeStamp, "SealedSecretTime": SealedSecretTime, "action": "update"}).Info("readSealedSecretAndCompareWithVaultStruct needUpdate")
 		}
 	}
 	return
@@ -127,8 +127,8 @@ func findRipeSecrets(PreviousKV *api.Secret, NewKV *api.Secret) (RipeSecrets []s
 	for _, v := range PreviousKV.Data["keys"].([]interface{}) {
 		containsString := SliceContainsString(NewKV.Data["keys"].([]interface{}), v.(string))
 		if !containsString {
-			log.WithFields(log.Fields{"PreviousKV.Data": PreviousKV.Data}).Debug("PickRipeSecrets: We have found a ripe secret. adding it to list of ripesecrets now.")
-			log.WithFields(log.Fields{"RipeSecret": v.(string)}).Info("PickRipeSecrets: We have found a ripe secret. adding it to list of ripesecrets now.")
+			log.WithFields(log.Fields{"PreviousKV.Data": PreviousKV.Data, "action": "delete"}).Debug("PickRipeSecrets: We have found a ripe secret. adding it to list of ripesecrets now.")
+			log.WithFields(log.Fields{"RipeSecret": v.(string), "action": "delete"}).Info("PickRipeSecrets: We have found a ripe secret. adding it to list of ripesecrets now.")
 			RipeSecrets = append(RipeSecrets, v.(string))
 			log.WithFields(log.Fields{"RipeSecret": RipeSecrets}).Debug("PickRipeSecrets final list of ripe secrets")
 		}

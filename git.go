@@ -25,7 +25,7 @@ func logHarvestDone(repo *git.Repository, commit plumbing.Hash) {
 	if err != nil {
 		log.WithFields(log.Fields{"obj": obj}).Error("git show -s")
 	}
-	log.WithFields(log.Fields{"commitMessage": obj.Message, "When": obj.Committer.When}).Info("Harvest of ripe secrets complete")
+	log.WithFields(log.Fields{"commitMessage": obj.Message, "When": obj.Committer.When, "action": "delete"}).Info("Harvest of ripe secrets complete")
 }
 
 func loadSSHKey() (sshKey []byte) {
@@ -100,7 +100,7 @@ func gitPush(config config) {
 		addtoWorktree(".", worktree)
 
 		// We can verify the current status of the worktree using the method Status.
-		commitMessage := fmt.Sprintf("Raven updated secret in %s", config.secretEngine)
+		commitMessage := fmt.Sprintf("Raven updated secret from secret engine %s and sets the destination enviroment to %s\n", config.secretEngine, config.destEnv)
 		commit, err := makeCommit(worktree, commitMessage)
 		if err != nil {
 			log.WithFields(log.Fields{"error": err}).Error("GitPush Worktree commit error")
@@ -114,7 +114,7 @@ func gitPush(config config) {
 		if err != nil {
 			log.WithFields(log.Fields{"obj": obj}).Error("git show -s")
 		}
-		log.WithFields(log.Fields{"commitMessage": obj.Message, "When": obj.Committer.When}).Info("Secret successfully updated")
+		log.WithFields(log.Fields{"commitMessage": obj.Message, "When": obj.Committer.When, "action": "updatedGit"}).Info("Raven updated files in git")
 		genericPostWebHook()
 	}
 
@@ -283,7 +283,7 @@ func removeFilesFromWorkTree(files []fs.FileInfo, worktree *git.Worktree) *git.W
 	for _, f := range files {
 		absolutePath := makeAbsolutePath(newConfig, f)
 		removeFileFromWorktree(absolutePath, worktree)
-		log.WithFields(log.Fields{"absolutePath": absolutePath, "ripeSecret": f.Name()}).Info("HarvestRipeSecrets found ripe secret. marked for deletion")
+		log.WithFields(log.Fields{"absolutePath": absolutePath, "ripeSecret": f.Name(), "action": "delete"}).Info("HarvestRipeSecrets found ripe secret. marked for deletion")
 	}
 	return worktree
 }
