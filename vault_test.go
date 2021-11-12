@@ -72,8 +72,6 @@ func TestValidateSelfToken(t *testing.T) {
 
 }
 
-
-
 func ReturnPrivateKey(t *testing.T) map[string]*rsa.PrivateKey {
 	t.Helper()
 	rsaPrivateKey := `-----BEGIN RSA PRIVATE KEY-----
@@ -141,7 +139,6 @@ GcBNYzovELWgwrTkcln68AOhJ5cRqQav/yWnTyyd6wlmtSR7nOnqKx32Uw==
 	privateKeys["mykey"] = privateKey
 	return privateKeys
 }
-
 
 func generateTestSecrets(t *testing.T, client *api.Client, config config, secretName string) {
 	t.Helper()
@@ -220,7 +217,7 @@ func TestPickRipeSecretsReturnsOne(t *testing.T) {
 
 	deleteTestSecrets(t, client, config, secretName)
 
-	newKV, err := getAllKVs(client,config)
+	newKV, err := getAllKVs(client, config)
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -250,7 +247,7 @@ func TestPickRipeSecretsReturnsNoRipe(t *testing.T) {
 	generateTestSecrets(t, client, config, secretName)
 	generateTestSecrets(t, client, config, secretNameTwo)
 
-	PreviousKV, err := getAllKVs(client,config)
+	PreviousKV, err := getAllKVs(client, config)
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -266,7 +263,6 @@ func TestPickRipeSecretsReturnsNoRipe(t *testing.T) {
 		t.Fatal("PickRipeSecrets should have returned 1 here")
 	}
 }
-
 
 func createVaultTestCluster(t *testing.T) *hashivault.TestCluster {
 
@@ -294,4 +290,3 @@ func createVaultTestCluster(t *testing.T) *hashivault.TestCluster {
 
 	return cluster
 }
-

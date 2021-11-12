@@ -22,9 +22,12 @@ type gitConfig struct {
 	repoUrl   string
 }
 
+var secretNameLog []string
+
+
 type SecretContents struct {
-	stringdata map[string]string
-	data map[string][]byte
+	stringdata  map[string]string
+	data        map[string][]byte
 	Annotations map[string]string
-	name string
+	name        string
 }

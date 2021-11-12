@@ -18,7 +18,7 @@ func forceRefresh(wg *sync.WaitGroup) {
 		log.WithFields(log.Fields{"list": list, "error": errorHere.Error()}).Warn("forceRefresh().getAllKVs failed")
 	}
 	for _, secret := range list.Data["Keys"].([]string) {
-		SealedSecret, _ := getKVAndCreateSealedSecret(client,newConfig, secret)
+		SealedSecret, _ := getKVAndCreateSealedSecret(client, newConfig, secret)
 		newBase := ensurePathandreturnWritePath(newConfig, secret)
 		SerializeAndWriteToFile(SealedSecret, newBase)
 		log.WithFields(log.Fields{"secret": secret, "newBase": newBase}).Info("forceRefresh() rewrote secret")

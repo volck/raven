@@ -75,13 +75,13 @@ func persistVaultChanges(secretList []interface{}, client *api.Client) {
 		//ensure that path exists in order to write to it later.
 		newBase := ensurePathandreturnWritePath(newConfig, secret.(string))
 		if _, err := os.Stat(newBase); os.IsNotExist(err) {
-			log.WithFields(log.Fields{"secret": secret.(string), "action": "create"}).Info("Creating Sealed Secret")
+			log.WithFields(log.Fields{"secret": secret.(string), "action": "request.operation.create"}).Info("Creating Sealed Secret")
 			SerializeAndWriteToFile(SealedSecret, newBase)
 		} else if !readSealedSecretAndCompareWithVaultStruct(secret.(string), SingleKVFromVault, newBase, newConfig.secretEngine) {
-			log.WithFields(log.Fields{"secret": secret}).Debug("readSealedSecretAndCompare: we already have this secret. Vault did not update")
+			log.WithFields(log.Fields{"secret": secret, "action": "request.operation.compare"}).Debug("readSealedSecretAndCompare: we already have this secret. Vault did not update")
 		} else {
 			// we need to update the secret.
-			log.WithFields(log.Fields{"secret": secret, "newBase": newBase, "action": "update"}).Info("readSealedSecretAndCompare: updating secret")
+			log.WithFields(log.Fields{"secret": secret, "newBase": newBase, "action": "request.operation.update"}).Info("readSealedSecretAndCompare: updating secret")
 			SerializeAndWriteToFile(SealedSecret, newBase)
 		}
 
