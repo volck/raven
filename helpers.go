@@ -2,10 +2,12 @@ package main
 
 import (
 	"encoding/base64"
+	"fmt"
 	log "github.com/sirupsen/logrus"
 	"io/fs"
 	"math/rand"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -21,6 +23,14 @@ func makeAbsolutePath(config config, filename fs.FileInfo) (newbase string) {
 	base := filepath.Join("declarative", config.destEnv, "sealedsecrets")
 	newbase = base + "/" + filename.Name()
 	return newbase
+}
+
+func parseGitStatusFileName(path string) string {
+	base := fmt.Sprintf("%s/%s/%s", "declarative", newConfig.destEnv, "sealedsecrets")
+	f := strings.ReplaceAll(path, base, "")
+	f = strings.ReplaceAll(f, ".yaml", "")
+	f = strings.ReplaceAll(f, "/", "")
+	return f
 }
 
 func sleep() {
@@ -43,4 +53,3 @@ func SliceContainsString(slice []interface{}, val string) bool {
 	}
 	return false
 }
-
