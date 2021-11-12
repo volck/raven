@@ -159,9 +159,6 @@ func TestCompareThatSealedSecretAndSecretMetadataMatches(t *testing.T) {
 		t.Fatal("TestCompareThatSealedSecretAndSecretMetadataMatches Annotations neq")
 	}
 	fmt.Printf("k8s: %v \n sealed: %v \n", k8sSecret, SealedSecret)
-	fmt.Printf("sealedsecret.name: %v \n k8s.name: %v \n", SealedSecret.Name, k8sSecret.Name )
+	fmt.Printf("sealedsecret.name: %v \n k8s.name: %v \n", SealedSecret.Name, k8sSecret.Name)
 
 }
-
-
-
