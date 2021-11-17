@@ -56,7 +56,7 @@ func PickRipeSecrets(PreviousKV *api.Secret, NewKV *api.Secret) (RipeSecrets []s
 	return RipeSecrets
 }
 
-func iterateRipeSecretsAndRemoveFromWorkingtree(RipeSecrets []string, worktree *git.Worktree, newConfig config) {
+func removeFromWorkingtree(RipeSecrets []string, worktree *git.Worktree, newConfig config) {
 	for ripe := range RipeSecrets {
 		base := filepath.Join("declarative", newConfig.destEnv, "sealedsecrets")
 		newbase := base + "/" + RipeSecrets[ripe] + ".yaml"
@@ -65,6 +65,7 @@ func iterateRipeSecretsAndRemoveFromWorkingtree(RipeSecrets []string, worktree *
 			log.WithFields(log.Fields{"err": err}).Error("HarvestRipeSecrets worktree.Remove failed")
 		}
 		log.WithFields(log.Fields{"ripeSecret": RipeSecrets[ripe], "action": "delete"}).Info("HarvestRipeSecrets found ripe secret. marked for deletion")
+
 	}
 }
 
