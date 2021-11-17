@@ -1,5 +1,7 @@
 package main
 
+import "k8s.io/client-go/kubernetes"
+
 type config struct {
 	vaultEndpoint     string
 	secretEngine      string
@@ -23,6 +25,7 @@ type gitConfig struct {
 }
 
 var secretNameLog []string
+var Clientset *kubernetes.Clientset
 
 
 type SecretContents struct {
@@ -30,4 +33,5 @@ type SecretContents struct {
 	data        map[string][]byte
 	Annotations map[string]string
 	name        string
+	Labels      map[string]string
 }
