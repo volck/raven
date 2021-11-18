@@ -153,7 +153,7 @@ func main() {
 
 		if validToken(client) {
 			// start webserver
-			go handleRequests()
+			go handleRequests(newConfig)
 			//ensure paths for first time.
 			newpath := filepath.Join(*clonePath, *secretEngine)
 			err := os.MkdirAll(newpath, os.ModePerm)
