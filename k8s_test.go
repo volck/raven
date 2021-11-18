@@ -101,7 +101,7 @@ emxMCi0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
 
 }
 
-func TestcleanKubernetes(t *testing.T) {
+func TestCleanKubernetes(t *testing.T) {
 
 	Clientset := testclient.NewSimpleClientset()
 	metaforone := metav1.TypeMeta{
