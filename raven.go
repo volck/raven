@@ -96,8 +96,9 @@ func createK8sSecret(name string, config config, dataFields *api.Secret) (secret
 	Annotations := applyAnnotations(dataFields, config)
 	data, stringdata := applyDatafieldsTok8sSecret(dataFields, config, Annotations)
 	Annotations = applyMetadata(dataFields, config, Annotations)
+	ravenLabels := applyRavenLabels()
 
-	SecretContent := SecretContents{stringdata: stringdata, data: data, Annotations: Annotations, name: name}
+	SecretContent := SecretContents{stringdata: stringdata, data: data, Annotations: Annotations, name: name, Labels: ravenLabels}
 	secret = NewSecretWithContents(SecretContent, config)
 
 	log.WithFields(log.Fields{"typeMeta": secret.TypeMeta, "objectMeta": secret.ObjectMeta, "data": data, "stringData": stringdata, "secret": secret}).Debug("createK8sSecret: made k8s secret object")
@@ -149,11 +150,10 @@ func main() {
 			log.WithFields(log.Fields{"config": newConfig}).Fatal("failed to initialize client")
 
 		}
+
 		if validToken(client) {
-
 			// start webserver
-			go handleRequests()
-
+			go handleRequests(newConfig)
 			//ensure paths for first time.
 			newpath := filepath.Join(*clonePath, *secretEngine)
 			err := os.MkdirAll(newpath, os.ModePerm)

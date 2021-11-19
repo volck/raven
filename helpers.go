@@ -53,3 +53,13 @@ func SliceContainsString(slice []interface{}, val string) bool {
 	}
 	return false
 }
+
+func stringSliceContainsString(slice []string, val string) bool {
+	for _, item := range slice {
+		if item == val {
+			return true
+		}
+	}
+	return false
+}
+

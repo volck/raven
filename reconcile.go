@@ -18,7 +18,7 @@ func HarvestRipeSecrets(RipeSecrets []string, config config) {
 	if len(RipeSecrets) > 0 {
 		repo := InitializeGitRepo(config)
 		worktree := initializeWorkTree(repo)
-		iterateRipeSecretsAndRemoveFromWorkingtree(RipeSecrets, worktree, config)
+		removeFromWorkingtree(RipeSecrets, worktree, config)
 		status, err := getGitStatus(worktree)
 		if err != nil {
 			log.WithFields(log.Fields{"err": err}).Error("HarvestRipeSecret Worktree status failed")
@@ -31,6 +31,13 @@ func HarvestRipeSecrets(RipeSecrets []string, config config) {
 			setPushOptions(config, repo, commit)
 			logHarvestDone(repo, commit)
 		}
+
+		kubernetesSecretList, err := kubernetesSecretList()
+		if err != nil {
+			log.WithFields(log.Fields{"err": err}).Error("harvestripesecret secretlist fetch failed")
+		}
+
+		cleanKubernetes(RipeSecrets, kubernetesSecretList, newConfig, Clientset)
 		log.WithFields(log.Fields{}).Debug("HarvestRipeSecrets done")
 	}
 }

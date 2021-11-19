@@ -1,11 +1,17 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
+	"fmt"
 	"github.com/hashicorp/vault/api"
 	log "github.com/sirupsen/logrus"
+	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"os"
 	"reflect"
 	"strconv"
 	"strings"
@@ -66,6 +72,12 @@ func applyDatafieldsTok8sSecret(dataFields *api.Secret, config config, Annotatio
 	return data, stringdata
 }
 
+func applyRavenLabels() map[string]string {
+	labels := make(map[string]string)
+	labels["managedBy"] = "raven"
+	return labels
+}
+
 func applyMetadata(dataFields *api.Secret, config config, Annotations map[string]string) map[string]string {
 
 	if len(dataFields.Data["metadata"].(map[string]interface{})) == 0 {
@@ -105,10 +117,55 @@ func NewSecretWithContents(contents SecretContents, config config) (secret v1.Se
 			Name:        contents.name,
 			Namespace:   config.destEnv,
 			Annotations: contents.Annotations,
+			Labels:      contents.Labels,
 		},
 		Data:       contents.data,
 		StringData: contents.stringdata,
 		Type:       "Opaque",
 	}
 	return secret
+}
+
+func initk8sServiceAccount() {
+	// creates the in-cluster config
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		panic(err.Error())
+	}
+	// creates the clientset
+	Clientset, err = kubernetes.NewForConfig(config)
+	if err != nil {
+		panic(err.Error())
+	}
+
+}
+
+func kubernetesSecretList() (*corev1.SecretList, error) {
+	sl, err := Clientset.CoreV1().Secrets(newConfig.destEnv).List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		fmt.Println("clientset secrets.err", err)
+	}
+	return sl, err
+}
+
+func hask8sRavenLabel(secret v1.Secret) bool {
+	haslabel := false
+	if secret.Labels["managedBy"] == "raven" {
+		haslabel = true
+	}
+
+	return haslabel
+}
+
+func cleanKubernetes(ripeSecrets []string, kubernetesSecretList *v1.SecretList, c config, clientset kubernetes.Interface) {
+	kubernetesClean := os.Getenv("KUBERNETESCLEAN")
+	if kubernetesClean == "true" {
+		for _, k8sSecret := range kubernetesSecretList.Items {
+			if stringSliceContainsString(ripeSecrets, k8sSecret.Name) && hask8sRavenLabel(k8sSecret) {
+				log.WithFields(log.Fields{"secret": k8sSecret.Name, "action": "kubernetes.delete", "namespace": c.destEnv}).Info("Secret no longer available in vault or in git. Removing from Kubernetes namespace.")
+				clientset.CoreV1().Secrets(c.destEnv).Delete(context.TODO(), k8sSecret.Name, metav1.DeleteOptions{})
+			}
+		}
+	}
+
 }
