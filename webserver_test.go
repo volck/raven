@@ -15,7 +15,7 @@ func TestForceNewSecrets(t *testing.T) {
 		secretEngine:  "kv",
 		token:         client.Token(),
 		destEnv:       "kv",
-		pemFile: 	`\\p0home001\UnixHome\a01631\dev\raven\ntcert.crt`,
+		pemFile: 	`cert.crt`,
 	}
 	secretName := "secret"
 	secretNameTwo := "secrettwo"
