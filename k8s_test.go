@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	log "github.com/sirupsen/logrus"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	testclient "k8s.io/client-go/kubernetes/fake"
+	"os"
 	"strings"
 	"testing"
 )
@@ -27,7 +29,10 @@ func TestCreatek8sSecret(t *testing.T) {
 		"data":     map[string]interface{}{"secretKey": "secretValue"},
 		"metadata": map[string]interface{}{"version": 2},
 	}
-	client.Logical().Write("kv/data/secret", secrets)
+	_, err := client.Logical().Write("kv/data/secret", secrets)
+	if err != nil {
+		log.WithFields(log.Fields{"error": err}).Error("Could not get list of secrets for kubernetes namespace")
+	}
 
 	singleSecret := getSingleKV(client, "kv", "secret")
 	k8sSecret := createK8sSecret("secret", config, singleSecret)
@@ -35,6 +40,65 @@ func TestCreatek8sSecret(t *testing.T) {
 		t.Fatal("k8sSecret nil, data not loaded")
 	}
 	fmt.Println("k8sSecret", k8sSecret)
+}
+
+func TestInitKubernetesConfig(t *testing.T) {
+	Clientset := testclient.NewSimpleClientset()
+
+	cluster := createVaultTestCluster(t)
+	defer cluster.Cleanup()
+	client := cluster.Cores[0].Client
+
+	config := config{
+		vaultEndpoint: cluster.Cores[0].Client.Address(),
+		secretEngine:  "kv",
+		token:         client.Token(),
+		destEnv:       "default",
+		pemFile:       "cert.pem",
+		Clientset:     Clientset,
+	}
+
+	metaforone := metav1.TypeMeta{
+		Kind:       "Secret",
+		APIVersion: "v1",
+	}
+	objectmetaforone := metav1.ObjectMeta{
+		Name:   "secret",
+		Labels: applyRavenLabels(),
+	}
+
+	metafortwo := metav1.TypeMeta{
+		Kind:       "Secret",
+		APIVersion: "v1",
+	}
+	objectmetafortwo := metav1.ObjectMeta{
+		Name:   "secrettwo",
+		Labels: applyRavenLabels(),
+	}
+
+	var secretOne = v1.Secret{
+		TypeMeta:   metaforone,
+		ObjectMeta: objectmetaforone,
+	}
+	var secretTwo = v1.Secret{
+		TypeMeta:   metafortwo,
+		ObjectMeta: objectmetafortwo,
+		Immutable:  nil,
+		Data:       nil,
+		StringData: nil,
+		Type:       "",
+	}
+	_, err := Clientset.CoreV1().Secrets("default").Create(context.TODO(), &secretOne, metav1.CreateOptions{})
+	if err != nil {
+		fmt.Println("testing failed, err", err)
+	}
+	_, err = Clientset.CoreV1().Secrets("default").Create(context.TODO(), &secretTwo, metav1.CreateOptions{})
+	if err != nil {
+		fmt.Println("testing failed, err", err)
+	}
+
+	fmt.Println(kubernetesSecretList(config))
+
 }
 
 func TestCreatek8sSecretwWithBase64Data(t *testing.T) {
@@ -89,7 +153,11 @@ emxMCi0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
 		"metadata": map[string]interface{}{"version": 2},
 	}
 	// write testobject
-	client.Logical().Write("kv/data/b64data", b64DataSecret)
+	_, err := client.Logical().Write("kv/data/b64data", b64DataSecret)
+	if err != nil {
+		log.WithFields(log.Fields{"error": err}).Error("client.Logical().Write(\"kv/data/b64data\", b64DataSecret)")
+
+	}
 	singleSecret := getSingleKV(client, "kv", "b64data")
 	k8sSecret := createK8sSecret("b64data", config, singleSecret)
 	for _, v := range k8sSecret.Data {
@@ -102,98 +170,199 @@ emxMCi0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
 }
 
 func TestCleanKubernetes(t *testing.T) {
+	kubernetesclean := os.Getenv("KUBERNETESCLEAN")
+	if kubernetesclean == "" {
+		t.Fatal("set correct env variables.")
+	} else {
+		Clientset := testclient.NewSimpleClientset()
+		metaforone := metav1.TypeMeta{
+			Kind:       "Secret",
+			APIVersion: "v1",
+		}
+		objectmetaforone := metav1.ObjectMeta{
+			Name:   "secret",
+			Labels: applyRavenLabels(),
+		}
 
-	Clientset := testclient.NewSimpleClientset()
-	metaforone := metav1.TypeMeta{
-		Kind:       "Secret",
-		APIVersion: "v1",
-	}
-	objectmetaforone := metav1.ObjectMeta{
-		Name:   "secret",
-		Labels: applyRavenLabels(),
-	}
+		metafortwo := metav1.TypeMeta{
+			Kind:       "Secret",
+			APIVersion: "v1",
+		}
+		objectmetafortwo := metav1.ObjectMeta{
+			Name:   "secrettwo",
+			Labels: applyRavenLabels(),
+		}
 
-	metafortwo := metav1.TypeMeta{
-		Kind:       "Secret",
-		APIVersion: "v1",
-	}
-	objectmetafortwo := metav1.ObjectMeta{
-		Name:   "secrettwo",
-		Labels: applyRavenLabels(),
-	}
+		var secretOne = v1.Secret{
+			TypeMeta:   metaforone,
+			ObjectMeta: objectmetaforone,
+		}
+		var secretTwo = v1.Secret{
+			TypeMeta:   metafortwo,
+			ObjectMeta: objectmetafortwo,
+			Immutable:  nil,
+			Data:       nil,
+			StringData: nil,
+			Type:       "",
+		}
+		cluster := createVaultTestCluster(t)
+		defer cluster.Cleanup()
+		client := cluster.Cores[0].Client
 
-	var secretOne = v1.Secret{
-		TypeMeta:   metaforone,
-		ObjectMeta: objectmetaforone,
+		config := config{
+			vaultEndpoint: cluster.Cores[0].Client.Address(),
+			secretEngine:  "kv",
+			token:         client.Token(),
+			destEnv:       "default",
+			pemFile:       "cert.pem",
+			Clientset:     Clientset,
+		}
+
+		_, err := config.Clientset.CoreV1().Secrets("default").Create(context.TODO(), &secretOne, metav1.CreateOptions{})
+		if err != nil {
+			fmt.Println("testing failed, err", err)
+		}
+		_, err = config.Clientset.CoreV1().Secrets("default").Create(context.TODO(), &secretTwo, metav1.CreateOptions{})
+		if err != nil {
+			fmt.Println("testing failed, err", err)
+		}
+
+		secretName := "secret"
+		secretNameTwo := "secrettwo"
+		generateTestSecrets(t, client, config, secretName)
+		generateTestSecrets(t, client, config, secretNameTwo)
+
+		PreviousKV, err := getAllKVs(client, config)
+		if err != nil {
+			fmt.Println(err)
+		}
+
+		deleteTestSecrets(t, client, config, secretName)
+
+		newKV, err := getAllKVs(client, config)
+		if err != nil {
+			fmt.Println(err)
+		}
+
+		picked := PickRipeSecrets(PreviousKV, newKV)
+		fmt.Println(picked, len(picked))
+
+		if len(picked) == 0 {
+			t.Fatal("PickRipeSecrets should have returned 1 here")
+		}
+		k8slistPre, err := kubernetesSecretList(config)
+		if err != nil {
+			fmt.Println("k8slist error", err)
+		}
+
+		cleanKubernetes(picked, k8slistPre, config)
+
+		k8slistAfter, err := kubernetesSecretList(config)
+
+		if k8slistPre == k8slistAfter {
+			fmt.Printf("pre: %v\n after: %v\n", k8slistPre, k8slistAfter)
+			t.Error("there is no difference between cluster snapshots. i.e. secrets were not deleted")
+		} else {
+			fmt.Printf("pre: %v\n after: %v\n. list should not match", k8slistPre.Items, k8slistAfter.Items)
+
+		}
+
 	}
-	var secretTwo = v1.Secret{
-		TypeMeta:   metafortwo,
-		ObjectMeta: objectmetafortwo,
-		Immutable:  nil,
-		Data:       nil,
-		StringData: nil,
-		Type:       "",
+}
+
+func TestMonitorForSecret_find_secret(t *testing.T) {
+	kubernetesclean := os.Getenv("KUBERNETESCLEAN")
+	if kubernetesclean == "" {
+		t.Fatal("set correct env variables.")
+	} else {
+		Clientset := testclient.NewSimpleClientset()
+		metaforone := metav1.TypeMeta{
+			Kind:       "Secret",
+			APIVersion: "v1",
+		}
+		objectmetaforone := metav1.ObjectMeta{
+			Name:   "secret",
+			Labels: applyRavenLabels(),
+		}
+
+		metafortwo := metav1.TypeMeta{
+			Kind:       "Secret",
+			APIVersion: "v1",
+		}
+		objectmetafortwo := metav1.ObjectMeta{
+			Name:   "secrettwo",
+			Labels: applyRavenLabels(),
+		}
+
+		var secretOne = v1.Secret{
+			TypeMeta:   metaforone,
+			ObjectMeta: objectmetaforone,
+		}
+		var secretTwo = v1.Secret{
+			TypeMeta:   metafortwo,
+			ObjectMeta: objectmetafortwo,
+			Immutable:  nil,
+			Data:       nil,
+			StringData: nil,
+			Type:       "",
+		}
+		_, err := Clientset.CoreV1().Secrets("default").Create(context.TODO(), &secretOne, metav1.CreateOptions{})
+		if err != nil {
+			fmt.Println("testing failed, err", err)
+		}
+		_, err = Clientset.CoreV1().Secrets("default").Create(context.TODO(), &secretTwo, metav1.CreateOptions{})
+		if err != nil {
+			fmt.Println("testing failed, err", err)
+		}
+
+		cluster := createVaultTestCluster(t)
+		defer cluster.Cleanup()
+		client := cluster.Cores[0].Client
+
+		config := config{
+			vaultEndpoint: cluster.Cores[0].Client.Address(),
+			secretEngine:  "kv",
+			token:         client.Token(),
+			destEnv:       "default",
+			pemFile:       "cert.pem",
+			Clientset:     Clientset,
+		}
+
+		secretName := "secret"
+		secretNameTwo := "secrettwo"
+		generateTestSecrets(t, client, config, secretName)
+		generateTestSecrets(t, client, config, secretNameTwo)
+
+		initKubernetesSearch(secretName, config)
 	}
-	_, err := Clientset.CoreV1().Secrets("default").Create(context.TODO(), &secretOne, metav1.CreateOptions{})
-	if err != nil {
-		fmt.Println("testing failed, err", err)
+}
+
+func TestMonitorForSecret_ShouldExpire(t *testing.T) {
+	kubernetesclean := os.Getenv("KUBERNETESCLEAN")
+	if kubernetesclean == "" {
+		t.Fatal("set correct env variables.")
+	} else {
+		Clientset := testclient.NewSimpleClientset()
+
+		cluster := createVaultTestCluster(t)
+		defer cluster.Cleanup()
+		client := cluster.Cores[0].Client
+
+		config := config{
+			vaultEndpoint: cluster.Cores[0].Client.Address(),
+			secretEngine:  "kv",
+			token:         client.Token(),
+			destEnv:       "default",
+			pemFile:       "cert.pem",
+			Clientset:     Clientset,
+		}
+
+		secretName := "secret"
+		secretNameTwo := "secrettwo"
+		generateTestSecrets(t, client, config, secretName)
+		generateTestSecrets(t, client, config, secretNameTwo)
+
+		initKubernetesSearch(secretName, config)
+
 	}
-	_, err = Clientset.CoreV1().Secrets("default").Create(context.TODO(), &secretTwo, metav1.CreateOptions{})
-	if err != nil {
-		fmt.Println("testing failed, err", err)
-	}
-
-	_, err = Clientset.CoreV1().Secrets("default").List(context.TODO(), metav1.ListOptions{})
-	cluster := createVaultTestCluster(t)
-	defer cluster.Cleanup()
-	client := cluster.Cores[0].Client
-
-	config := config{
-		vaultEndpoint: cluster.Cores[0].Client.Address(),
-		secretEngine:  "kv",
-		token:         client.Token(),
-		destEnv:       "default",
-		pemFile:       "cert.pem",
-	}
-
-	secretName := "secret"
-	secretNameTwo := "secrettwo"
-	generateTestSecrets(t, client, config, secretName)
-	generateTestSecrets(t, client, config, secretNameTwo)
-
-	PreviousKV, err := getAllKVs(client, config)
-	if err != nil {
-		fmt.Println(err)
-	}
-
-	deleteTestSecrets(t, client, config, secretName)
-
-	newKV, err := getAllKVs(client, config)
-	if err != nil {
-		fmt.Println(err)
-	}
-
-	picked := PickRipeSecrets(PreviousKV, newKV)
-	fmt.Println(picked, len(picked))
-
-	if len(picked) == 0 {
-		t.Fatal("PickRipeSecrets should have returned 1 here")
-	}
-	k8slistPre, err := Clientset.CoreV1().Secrets("default").List(context.TODO(), metav1.ListOptions{})
-	if err != nil {
-		fmt.Println("k8slist error", err)
-	}
-
-	cleanKubernetes(picked, k8slistPre, config, Clientset)
-
-	k8slistAfter, err := Clientset.CoreV1().Secrets("default").List(context.TODO(), metav1.ListOptions{})
-	if err != nil {
-		fmt.Println("k8slist error", err)
-	}
-
-	if k8slistPre == k8slistAfter {
-		fmt.Printf("pre: %v\n after: %v\n", k8slistPre, k8slistAfter)
-		t.Error("there is no difference between cluster snapshots. i.e. secrets were not deleted")
-	}
-
 }
