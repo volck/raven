@@ -15,6 +15,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func applyAnnotations(dataFields *api.Secret, config config) map[string]string {
@@ -43,7 +44,7 @@ func applyAnnotations(dataFields *api.Secret, config config) map[string]string {
 	return Annotations
 }
 
-func applyDatafieldsTok8sSecret(dataFields *api.Secret, config config, Annotations map[string]string) (data map[string][]byte, stringdata map[string]string) {
+func applyDatafieldsTok8sSecret(dataFields *api.Secret, Annotations map[string]string) (data map[string][]byte, stringdata map[string]string) {
 	stringdata = make(map[string]string)
 
 	data = make(map[string][]byte)
@@ -78,7 +79,7 @@ func applyRavenLabels() map[string]string {
 	return labels
 }
 
-func applyMetadata(dataFields *api.Secret, config config, Annotations map[string]string) map[string]string {
+func applyMetadata(dataFields *api.Secret, Annotations map[string]string) map[string]string {
 
 	if len(dataFields.Data["metadata"].(map[string]interface{})) == 0 {
 		log.WithFields(log.Fields{`len(data["metadata"])`: len(dataFields.Data["metadata"].(map[string]interface{}))}).Debug("No metadata placed")
@@ -126,22 +127,24 @@ func NewSecretWithContents(contents SecretContents, config config) (secret v1.Se
 	return secret
 }
 
-func initk8sServiceAccount() {
+func initk8sServiceAccount() *kubernetes.Clientset {
 	// creates the in-cluster config
 	config, err := rest.InClusterConfig()
 	if err != nil {
 		panic(err.Error())
 	}
 	// creates the clientset
-	Clientset, err = kubernetes.NewForConfig(config)
+	Clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		panic(err.Error())
 	}
 
+	return Clientset
+
 }
 
-func kubernetesSecretList() (*corev1.SecretList, error) {
-	sl, err := Clientset.CoreV1().Secrets(newConfig.destEnv).List(context.TODO(), metav1.ListOptions{})
+func kubernetesSecretList(c config) (*corev1.SecretList, error) {
+	sl, err := c.Clientset.CoreV1().Secrets(c.destEnv).List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		fmt.Println("clientset secrets.err", err)
 	}
@@ -157,15 +160,70 @@ func hask8sRavenLabel(secret v1.Secret) bool {
 	return haslabel
 }
 
-func cleanKubernetes(ripeSecrets []string, kubernetesSecretList *v1.SecretList, c config, clientset kubernetes.Interface) {
+func cleanKubernetes(ripeSecrets []string, kubernetesSecretList *v1.SecretList, c config) {
 	kubernetesClean := os.Getenv("KUBERNETESCLEAN")
 	if kubernetesClean == "true" {
 		for _, k8sSecret := range kubernetesSecretList.Items {
 			if stringSliceContainsString(ripeSecrets, k8sSecret.Name) && hask8sRavenLabel(k8sSecret) {
 				log.WithFields(log.Fields{"secret": k8sSecret.Name, "action": "kubernetes.delete", "namespace": c.destEnv}).Info("Secret no longer available in vault or in git. Removing from Kubernetes namespace.")
-				clientset.CoreV1().Secrets(c.destEnv).Delete(context.TODO(), k8sSecret.Name, metav1.DeleteOptions{})
+				err := c.Clientset.CoreV1().Secrets(c.destEnv).Delete(context.TODO(), k8sSecret.Name, metav1.DeleteOptions{})
+				if err != nil {
+					log.WithFields(log.Fields{"error": err.Error()}).Info("cleanKubernetes clientsetDelete in namespace failed.")
+
+				}
 			}
 		}
 	}
 
+}
+
+func searchKubernetesForResults(ctx context.Context, secret string, c config) {
+
+	res := make(chan bool)
+	go func() {
+		myres := secretInNameSpace(c, secret)
+		if myres == true {
+			res <- myres
+			close(res)
+		}
+	}()
+
+	select {
+	case found := <-res:
+		log.WithFields(log.Fields{"secret": secret, "action": "raven.lookup.kubernetes.successful", "namespace": c.destEnv, "found": found}).Info("Raven sucessfully found secret in namespace")
+	case <-ctx.Done():
+		log.WithFields(log.Fields{"secret": secret, "action": "raven.lookup.kubernetes.timeexpired", "namespace": c.destEnv}).Info("Raven could not find secret")
+	}
+}
+
+func secretInNameSpace(c config, secret string) bool {
+	inNamespace := false
+	for {
+		kubernetesSecretList, err := kubernetesSecretList(c)
+		if err != nil {
+			log.WithFields(log.Fields{"namespace": c.destEnv}).Error("Could not get list of secrets for kubernetes namespace")
+		} else {
+			for _, kubernetesSecret := range kubernetesSecretList.Items {
+				if kubernetesSecret.Name == secret && hask8sRavenLabel(kubernetesSecret) {
+					inNamespace := true
+					return inNamespace
+				}
+			}
+			time.Sleep(10 * time.Second)
+		}
+		return inNamespace
+
+	}
+}
+
+func initKubernetesSearch(secret string, c config) {
+
+	kubernetesClean := os.Getenv("KUBERNETESCLEAN")
+	fmt.Println("kubernetesClean", kubernetesClean)
+	if kubernetesClean == "true" {
+		ctx := context.Background()
+		ctxWithTimeout, cancel := context.WithTimeout(ctx, time.Duration(30)*time.Second)
+		searchKubernetesForResults(ctxWithTimeout, secret, c)
+		defer cancel()
+	}
 }
