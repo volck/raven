@@ -14,19 +14,7 @@ type config struct {
 	Clientset         kubernetes.Interface
 }
 
-type vaultConfig struct {
-	vaultEndpoint string
-	secretEngine  string
-	token         string
-}
-
-type gitConfig struct {
-	clonePath string
-	repoUrl   string
-}
-
 var secretNameLog []string
-var Clientset *kubernetes.Clientset
 
 type SecretContents struct {
 	stringdata  map[string]string
