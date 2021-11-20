@@ -11,6 +11,7 @@ type config struct {
 	clonePath         string
 	repoUrl           string
 	DocumentationKeys []string
+	Clientset         kubernetes.Interface
 }
 
 type vaultConfig struct {
@@ -26,7 +27,6 @@ type gitConfig struct {
 
 var secretNameLog []string
 var Clientset *kubernetes.Clientset
-
 
 type SecretContents struct {
 	stringdata  map[string]string
