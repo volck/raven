@@ -75,10 +75,18 @@ func initAdditionalKeys() (DocumentationKeys []string) {
 */
 
 func WriteErrorToTerminationLog(errormsg string) {
-	file, _ := os.Create("/dev/termination-log")
+	file, err := os.Create("/dev/termination-log")
+	if err != nil {
+		log.WithFields(log.Fields{"error": err.Error()}).Fatal("WriteErrorToTerminationLog failed")
+
+	}
 	defer file.Close()
 
-	file.WriteString(errormsg)
+	_, err = file.WriteString(errormsg)
+	if err != nil {
+		log.WithFields(log.Fields{"error": err.Error()}).Fatal("writeString errormsg failed")
+
+	}
 	os.Exit(1)
 }
 
@@ -94,8 +102,8 @@ returns v1.Secret for consumption by SealedSecret
 func createK8sSecret(name string, config config, dataFields *api.Secret) (secret v1.Secret) {
 
 	Annotations := applyAnnotations(dataFields, config)
-	data, stringdata := applyDatafieldsTok8sSecret(dataFields, config, Annotations)
-	Annotations = applyMetadata(dataFields, config, Annotations)
+	data, stringdata := applyDatafieldsTok8sSecret(dataFields, Annotations)
+	Annotations = applyMetadata(dataFields, Annotations)
 	ravenLabels := applyRavenLabels()
 
 	SecretContent := SecretContents{stringdata: stringdata, data: data, Annotations: Annotations, name: name, Labels: ravenLabels}
@@ -114,6 +122,7 @@ var newConfig = config{
 	clonePath:         "",
 	repoUrl:           "",
 	DocumentationKeys: initAdditionalKeys(),
+	Clientset:         initk8sServiceAccount(),
 }
 
 func main() {
