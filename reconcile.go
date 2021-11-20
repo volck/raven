@@ -32,12 +32,12 @@ func HarvestRipeSecrets(RipeSecrets []string, config config) {
 			logHarvestDone(repo, commit)
 		}
 
-		kubernetesSecretList, err := kubernetesSecretList()
+		kubernetesSecretList, err := kubernetesSecretList(config)
 		if err != nil {
 			log.WithFields(log.Fields{"err": err}).Error("harvestripesecret secretlist fetch failed")
 		}
 
-		cleanKubernetes(RipeSecrets, kubernetesSecretList, newConfig, Clientset)
+		cleanKubernetes(RipeSecrets, kubernetesSecretList, newConfig)
 		log.WithFields(log.Fields{}).Debug("HarvestRipeSecrets done")
 	}
 }
@@ -48,7 +48,8 @@ func SerializeAndWriteToFile(SealedSecret *sealedSecretPkg.SealedSecret, fullPat
 		log.WithFields(log.Fields{"fullPath": fullPath, "error": err.Error()}).Fatal("SerializeAndWriteToFile.Os.Create")
 		WriteErrorToTerminationLog(err.Error())
 	}
-	e := k8sJson.NewYAMLSerializer(k8sJson.DefaultMetaFactory, nil, nil)
+	//e := k8sJson.NewYAMLSerializer(k8sJson.DefaultMetaFactory, nil, nil)
+	e := k8sJson.NewSerializerWithOptions(k8sJson.DefaultMetaFactory, nil, nil, k8sJson.SerializerOptions{})
 	err = e.Encode(SealedSecret, f)
 	if err != nil {
 		log.WithFields(log.Fields{"fullPath": fullPath, "error": err.Error()}).Fatal("SerializeAndWriteToFile.e.encode")
@@ -67,7 +68,10 @@ makes sure that basePath exists for SerializeAndWriteToFile, returning basePath.
 func ensurePathandreturnWritePath(config config, secretName string) (basePath string) {
 
 	base := filepath.Join(config.clonePath, "declarative", config.destEnv, "sealedsecrets")
-	os.MkdirAll(base, os.ModePerm)
+	err := os.MkdirAll(base, os.ModePerm)
+	if err != nil {
+		log.WithFields(log.Fields{"error": err.Error()}).Fatal("ensurePathandreturnWritePath.os.Mkdir")
+	}
 	basePath = base + "/" + secretName + ".yaml"
 	return
 }
@@ -84,12 +88,14 @@ func persistVaultChanges(secretList []interface{}, client *api.Client) {
 		if _, err := os.Stat(newBase); os.IsNotExist(err) {
 			log.WithFields(log.Fields{"secret": secret.(string), "action": "request.operation.create"}).Info("Creating Sealed Secret")
 			SerializeAndWriteToFile(SealedSecret, newBase)
+			initKubernetesSearch(secret.(string), newConfig)
 		} else if !readSealedSecretAndCompareWithVaultStruct(secret.(string), SingleKVFromVault, newBase, newConfig.secretEngine) {
 			log.WithFields(log.Fields{"secret": secret, "action": "request.operation.compare"}).Debug("readSealedSecretAndCompare: we already have this secret. Vault did not update")
 		} else {
 			// we need to update the secret.
 			log.WithFields(log.Fields{"secret": secret, "newBase": newBase, "action": "request.operation.update"}).Info("readSealedSecretAndCompare: updating secret")
 			SerializeAndWriteToFile(SealedSecret, newBase)
+			initKubernetesSearch(secret.(string), newConfig)
 		}
 
 	}
