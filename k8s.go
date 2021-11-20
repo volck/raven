@@ -129,16 +129,17 @@ func NewSecretWithContents(contents SecretContents, config config) (secret v1.Se
 
 func initk8sServiceAccount() *kubernetes.Clientset {
 	// creates the in-cluster config
+
 	config, err := rest.InClusterConfig()
 	if err != nil {
-		panic(err.Error())
+		log.WithFields(log.Fields{"error": err}).Info("initk8sServiceAccount incluster config failed")
+
 	}
 	// creates the clientset
 	Clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		panic(err.Error())
+		log.WithFields(log.Fields{"error": err}).Info("initk8sServiceAccount clientset failed")
 	}
-
 	return Clientset
 
 }
