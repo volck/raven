@@ -9,6 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"os"
@@ -145,6 +146,7 @@ func initk8sServiceAccount() *kubernetes.Clientset {
 }
 
 func kubernetesSecretList(c config) (*corev1.SecretList, error) {
+	c.Clientset = initk8sServiceAccount()
 	sl, err := c.Clientset.CoreV1().Secrets(c.destEnv).List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		fmt.Println("clientset secrets.err", err)
@@ -164,6 +166,7 @@ func hask8sRavenLabel(secret v1.Secret) bool {
 func cleanKubernetes(ripeSecrets []string, kubernetesSecretList *v1.SecretList, c config) {
 	kubernetesClean := os.Getenv("KUBERNETESCLEAN")
 	if kubernetesClean == "true" {
+		c.Clientset = initk8sServiceAccount()
 		for _, k8sSecret := range kubernetesSecretList.Items {
 			if stringSliceContainsString(ripeSecrets, k8sSecret.Name) && hask8sRavenLabel(k8sSecret) {
 				log.WithFields(log.Fields{"secret": k8sSecret.Name, "action": "kubernetes.delete", "namespace": c.destEnv}).Info("Secret no longer available in vault or in git. Removing from Kubernetes namespace.")
@@ -178,53 +181,58 @@ func cleanKubernetes(ripeSecrets []string, kubernetesSecretList *v1.SecretList, 
 
 }
 
-func searchKubernetesForResults(ctx context.Context, secret string, c config) {
-
-	res := make(chan bool)
-	go func() {
-		myres := secretInNameSpace(c, secret)
-		if myres == true {
-			res <- myres
-			close(res)
-		}
-	}()
-
-	select {
-	case found := <-res:
-		log.WithFields(log.Fields{"secret": secret, "action": "raven.lookup.kubernetes.successful", "namespace": c.destEnv, "found": found}).Info("Raven sucessfully found secret in namespace")
-	case <-ctx.Done():
-		log.WithFields(log.Fields{"secret": secret, "action": "raven.lookup.kubernetes.timeexpired", "namespace": c.destEnv}).Info("Raven could not find secret")
+func searchKubernetesForResults(ctx context.Context, Mysecret string, c config) {
+	watcher, err := c.Clientset.CoreV1().Secrets(c.destEnv).Watch(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		log.Fatal("searchKubernetesForResults timeout", err)
 	}
-}
-
-func secretInNameSpace(c config, secret string) bool {
-	inNamespace := false
-	for {
-		kubernetesSecretList, err := kubernetesSecretList(c)
-		if err != nil {
-			log.WithFields(log.Fields{"namespace": c.destEnv}).Error("Could not get list of secrets for kubernetes namespace")
-		} else {
-			for _, kubernetesSecret := range kubernetesSecretList.Items {
-				if kubernetesSecret.Name == secret && hask8sRavenLabel(kubernetesSecret) {
-					inNamespace := true
-					return inNamespace
-				}
+	for event := range watcher.ResultChan() {
+		secretobj := event.Object.(*v1.Secret)
+		switch event.Type {
+		case watch.Added:
+			if Mysecret == secretobj.ObjectMeta.Name {
+				added <- Mysecret
+				break
 			}
-			time.Sleep(10 * time.Second)
 		}
-		return inNamespace
-
 	}
 }
 
 func initKubernetesSearch(secret string, c config) {
 
 	kubernetesClean := os.Getenv("KUBERNETESCLEAN")
-	fmt.Println("kubernetesClean", kubernetesClean)
 	if kubernetesClean == "true" {
+		c.Clientset = initk8sServiceAccount()
 		ctx := context.Background()
-		ctxWithTimeout, cancel := context.WithTimeout(ctx, time.Duration(30)*time.Second)
-		searchKubernetesForResults(ctxWithTimeout, secret, c)
+		ctxWithTimeout, cancel := context.WithTimeout(ctx, time.Duration(5)*time.Minute)
+		go searchKubernetesForResults(ctxWithTimeout, secret, c)
 		defer cancel()
+	}
+}
+
+func monitorMessages(added chan string, deleted chan string) {
+	log.WithFields(log.Fields{"action": "kubernetes.lookup.secret.start"}).Info("Raven starting search for secret in namespace")
+	for i := 0; i < 1; i++ {
+		select {
+		case addedSecret := <-added:
+			log.WithFields(log.Fields{"action": "kubernetes.lookup.secret.success", "secret": addedSecret}).Info("Raven found secret in kubernetes namespace")
+		}
+	}
+}
+
+func startWatch(err error, clientset *kubernetes.Clientset, added chan string, deleted chan string) {
+	watcher, err := clientset.CoreV1().Secrets(v1.NamespaceDefault).Watch(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	for event := range watcher.ResultChan() {
+		secret := event.Object.(*v1.Secret)
+		switch event.Type {
+		case watch.Added:
+			added <- secret.Name
+		case watch.Deleted:
+			deleted <- secret.Name
+		}
 	}
 }
