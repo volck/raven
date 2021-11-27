@@ -23,3 +23,6 @@ type SecretContents struct {
 	name        string
 	Labels      map[string]string
 }
+
+
+var added = make(chan string)
