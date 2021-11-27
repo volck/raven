@@ -210,7 +210,7 @@ func initKubernetesSearch(secret string, c config) {
 	}
 }
 
-func monitorMessages(added chan string, deleted chan string) {
+func monitorMessages(added chan string) {
 	log.WithFields(log.Fields{"action": "kubernetes.lookup.secret.start"}).Info("Raven starting search for secret in namespace")
 	for i := 0; i < 1; i++ {
 		select {
