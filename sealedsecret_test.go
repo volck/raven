@@ -80,6 +80,40 @@ func TestGetKVAndCreateNormalSealedSecret(t *testing.T) {
 
 }
 
+
+func TestGetKVAndCreateNormalSealedSecretWithNoDataFields(t *testing.T) {
+	t.Parallel()
+
+	cluster := createVaultTestCluster(t)
+	defer cluster.Cleanup()
+	client := cluster.Cores[0].Client
+	config := config{
+		vaultEndpoint: cluster.Cores[0].Client.Address(),
+		secretEngine:  "kv",
+		token:         client.Token(),
+		destEnv:       "kv",
+	}
+	// make testable secrets for cluster
+	secrets := map[string]interface{}{
+		"data":    nil,
+		"metadata": map[string]interface{}{"version": 2},
+	}
+	client.Logical().Write("kv/data/secret", secrets)
+
+	secretEngine := "kv"
+	secretName := "secret"
+	pemFile := `cert.crt`
+
+	SingleKVFromVault := getSingleKV(client, secretEngine, secretName)
+	k8sSecret := createK8sSecret(secretName, config, SingleKVFromVault)
+	SealedSecret := createSealedSecret(pemFile, &k8sSecret)
+	fmt.Printf("k8sSecret.Data: %v \n k8sSecret.StringData: %v \n k8sSecret.Annotations: %v \n", k8sSecret.Data, k8sSecret.StringData, k8sSecret.Annotations)
+	fmt.Printf("SealedSecret: %v \n SealedSecret.Annotations: %v \n", SealedSecret, k8sSecret.Annotations)
+
+}
+
+
+
 func TestGetKVAndCreateSealedSecretWithDocumentKeysAnnotations(t *testing.T) {
 	t.Parallel()
 	// Initiate cluster and get client

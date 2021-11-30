@@ -11,22 +11,10 @@ type config struct {
 	clonePath         string
 	repoUrl           string
 	DocumentationKeys []string
-}
-
-type vaultConfig struct {
-	vaultEndpoint string
-	secretEngine  string
-	token         string
-}
-
-type gitConfig struct {
-	clonePath string
-	repoUrl   string
+	Clientset         kubernetes.Interface
 }
 
 var secretNameLog []string
-var Clientset *kubernetes.Clientset
-
 
 type SecretContents struct {
 	stringdata  map[string]string
@@ -35,3 +23,6 @@ type SecretContents struct {
 	name        string
 	Labels      map[string]string
 }
+
+
+var added = make(chan string)

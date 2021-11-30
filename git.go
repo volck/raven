@@ -123,6 +123,7 @@ func gitPush(config config) {
 		}
 		log.WithFields(log.Fields{"commitMessage": obj.Message, "When": obj.Committer.When, "action": "request.git.operation.pushed", "secret": secretNameLog}).Info("Raven updated files in git")
 		genericPostWebHook()
+		go monitorMessages(secretNameLog)
 		secretNameLog = []string{}
 	}
 
@@ -146,7 +147,6 @@ func initializeWorkTree(r *git.Repository) (w *git.Worktree) {
 
 func getGitStatus(worktree *git.Worktree) (status git.Status, err error) {
 	status, err = worktree.Status()
-
 	if err != nil {
 		log.WithFields(log.Fields{
 			"err": err,
