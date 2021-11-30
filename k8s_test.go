@@ -12,6 +12,37 @@ import (
 	"testing"
 )
 
+
+func TestCreatek8sSecretWithMissingDataField(t *testing.T) {
+	t.Parallel()
+	cluster := createVaultTestCluster(t)
+	defer cluster.Cleanup()
+	client := cluster.Cores[0].Client
+	config := config{
+		vaultEndpoint: cluster.Cores[0].Client.Address(),
+		secretEngine:  "kv",
+		token:         client.Token(),
+		destEnv:       "kv",
+	}
+
+	// make testable secrets for cluster
+
+	secrets := map[string]interface{}{
+		"data":    nil,
+		"metadata": nil,
+	}
+	_, err := client.Logical().Write("kv/data/secret", secrets)
+	if err != nil {
+		log.WithFields(log.Fields{"error": err}).Error("Could not get list of secrets for kubernetes namespace")
+	}
+
+	singleSecret := getSingleKV(client, "kv", "secret")
+	k8sSecret := createK8sSecret("secret", config, singleSecret)
+	fmt.Println("k8sSecret created successfully without any fields", k8sSecret)
+}
+
+
+
 func TestCreatek8sSecret(t *testing.T) {
 	t.Parallel()
 	cluster := createVaultTestCluster(t)
