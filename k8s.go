@@ -45,33 +45,36 @@ func applyAnnotations(dataFields *api.Secret, config config) map[string]string {
 	return Annotations
 }
 
-func applyDatafieldsTok8sSecret(dataFields *api.Secret, Annotations map[string]string) (data map[string][]byte, stringdata map[string]string) {
+func applyDatafieldsTok8sSecret(dataFields *api.Secret, Annotations map[string]string, name string) (data map[string][]byte, stringdata map[string]string) {
 	stringdata = make(map[string]string)
-
 	data = make(map[string][]byte)
-	if len(dataFields.Data["data"].(map[string]interface{})) == 0 {
-		log.WithFields(log.Fields{`len(data["metadata"])`: len(dataFields.Data["metadata"].(map[string]interface{}))}).Debug("No datafields placed")
+	if dataFields.Data["data"] == nil {
+		log.WithFields(log.Fields{"secret": name}).Info("Trying to apply data fields to kubernetes secret, but vault datafields seem to be empty. Was this secret deleted correctly? Skipping.")
+	} else if len(dataFields.Data["data"].(map[string]interface{})) == 0 {
+		log.WithFields(log.Fields{`len(data["metadata"])`: len(dataFields.Data["metadata"].(map[string]interface{})), "secret": name}).Info("Trying to apply datafields to kubernetes secret, but no datafields could be placed.")
 		return data, stringdata
-	}
-	for k, v := range dataFields.Data["data"].(map[string]interface{}) {
-		log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["data"]}).Debug("createK8sSecret: dataFields.Data[data] iterate")
-		if strings.HasPrefix(v.(string), "base64:") {
-			stringSplit := strings.Split(v.(string), ":")
-			if isBase64(stringSplit[1]) {
-				data[k], _ = base64.StdEncoding.DecodeString(stringSplit[1])
-				log.WithFields(log.Fields{"key": k, "value": v, "split": stringSplit, "datafields": dataFields.Data["data"]}).Debug("createK8sSecret: dataFields.Data[data] found base64-encoding")
+	} else {
+		for k, v := range dataFields.Data["data"].(map[string]interface{}) {
+			log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["data"]}).Debug("createK8sSecret: dataFields.Data[data] iterate")
+			if strings.HasPrefix(v.(string), "base64:") {
+				stringSplit := strings.Split(v.(string), ":")
+				if isBase64(stringSplit[1]) {
+					data[k], _ = base64.StdEncoding.DecodeString(stringSplit[1])
+					log.WithFields(log.Fields{"key": k, "value": v, "split": stringSplit, "datafields": dataFields.Data["data"]}).Debug("createK8sSecret: dataFields.Data[data] found base64-encoding")
+				} else {
+					log.WithFields(log.Fields{"key": k, "value": v}).Warn("key is not valid BASE64")
+				}
+			} else if isDocumentationKey(newConfig.DocumentationKeys, k) {
+				Annotations[k] = v.(string)
+				log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["data"], "Annotations": Annotations}).Debug("createK8sSecret: dataFields.Data[data] found description field")
 			} else {
-				log.WithFields(log.Fields{"key": k, "value": v}).Warn("key is not valid BASE64")
+				stringdata[k] = v.(string)
+				log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["data"]}).Debug("createK8sSecret: dataFields.Data[data] catch all. putting value in stringdata[]")
 			}
-		} else if isDocumentationKey(newConfig.DocumentationKeys, k) {
-			Annotations[k] = v.(string)
-			log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["data"], "Annotations": Annotations}).Debug("createK8sSecret: dataFields.Data[data] found description field")
-		} else {
-			stringdata[k] = v.(string)
-			log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["data"]}).Debug("createK8sSecret: dataFields.Data[data] catch all. putting value in stringdata[]")
 		}
 	}
 	return data, stringdata
+
 }
 
 func applyRavenLabels() map[string]string {
@@ -182,19 +185,25 @@ func cleanKubernetes(ripeSecrets []string, kubernetesSecretList *v1.SecretList, 
 }
 
 func searchKubernetesForResults(ctx context.Context, Mysecret string, c config) {
-	watcher, err := c.Clientset.CoreV1().Secrets(c.destEnv).Watch(context.Background(), metav1.ListOptions{})
-	if err != nil {
-		log.Fatal("searchKubernetesForResults timeout", err)
-	}
-	for event := range watcher.ResultChan() {
-		secretobj := event.Object.(*v1.Secret)
-		switch event.Type {
-		case watch.Added:
-			if Mysecret == secretobj.ObjectMeta.Name {
-				added <- Mysecret
-				break
+	kubernetesClean := os.Getenv("KUBERNETESCLEAN")
+	if kubernetesClean == "true" {
+
+		watcher, err := c.Clientset.CoreV1().Secrets(c.destEnv).Watch(context.Background(), metav1.ListOptions{})
+		if err != nil {
+			log.Fatal("searchKubernetesForResults timeout", err)
+		}
+		for {
+			for event := range watcher.ResultChan() {
+				secretObject := event.Object.(*v1.Secret)
+
+				switch event.Type {
+				case watch.Added:
+					added <- secretObject.ObjectMeta.Name
+				}
+
 			}
 		}
+
 	}
 }
 
@@ -210,29 +219,19 @@ func initKubernetesSearch(secret string, c config) {
 	}
 }
 
-func monitorMessages(added chan string) {
-	log.WithFields(log.Fields{"action": "kubernetes.lookup.secret.start"}).Info("Raven starting search for secret in namespace")
-	for i := 0; i < 1; i++ {
-		select {
-		case addedSecret := <-added:
-			log.WithFields(log.Fields{"action": "kubernetes.lookup.secret.success", "secret": addedSecret}).Info("Raven found secret in kubernetes namespace")
-		}
-	}
-}
-
-func startWatch(err error, clientset *kubernetes.Clientset, added chan string, deleted chan string) {
-	watcher, err := clientset.CoreV1().Secrets(v1.NamespaceDefault).Watch(context.TODO(), metav1.ListOptions{})
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	for event := range watcher.ResultChan() {
-		secret := event.Object.(*v1.Secret)
-		switch event.Type {
-		case watch.Added:
-			added <- secret.Name
-		case watch.Deleted:
-			deleted <- secret.Name
+func monitorMessages(watchlist []string) {
+	kubernetesClean := os.Getenv("KUBERNETESCLEAN")
+	if kubernetesClean == "true" {
+		log.WithFields(log.Fields{"action": "kubernetes.lookup.secret.start", "secret": watchlist}).Info("Raven starting search for secret in namespace")
+		for {
+			for i := 0; i < 1; i++ {
+				select {
+				case addedSecret := <-added:
+					if stringSliceContainsString(watchlist, addedSecret) {
+						log.WithFields(log.Fields{"action": "kubernetes.lookup.secret.success", "secret": addedSecret}).Info("Raven found secret in kubernetes namespace")
+					}
+				}
+			}
 		}
 	}
 }
