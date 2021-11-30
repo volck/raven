@@ -4,12 +4,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/hashicorp/vault/api"
 
 	log "github.com/sirupsen/logrus"
 	"k8s.io/api/core/v1"
-	"path/filepath"
 	"strings"
 )
 
@@ -101,9 +101,8 @@ returns v1.Secret for consumption by SealedSecret
 */
 
 func createK8sSecret(name string, config config, dataFields *api.Secret) (secret v1.Secret) {
-
 	Annotations := applyAnnotations(dataFields, config)
-	data, stringdata := applyDatafieldsTok8sSecret(dataFields, Annotations)
+	data, stringdata := applyDatafieldsTok8sSecret(dataFields, Annotations, name)
 	Annotations = applyMetadata(dataFields, Annotations)
 	ravenLabels := applyRavenLabels()
 
@@ -111,7 +110,9 @@ func createK8sSecret(name string, config config, dataFields *api.Secret) (secret
 	secret = NewSecretWithContents(SecretContent, config)
 
 	log.WithFields(log.Fields{"typeMeta": secret.TypeMeta, "objectMeta": secret.ObjectMeta, "data": data, "stringData": stringdata, "secret": secret}).Debug("createK8sSecret: made k8s secret object")
+
 	return
+
 }
 
 var newConfig = config{
@@ -153,11 +154,6 @@ func main() {
 		newConfig.repoUrl = *repoUrl
 		newConfig.DocumentationKeys = initAdditionalKeys() // we make sure that if the env here is set we can allow multiple descriptional fields in annotations.
 
-		kubeclean := os.Getenv("KUBERNETESCLEAN")
-
-		if kubeclean == "true" {
-			initk8sServiceAccount()
-		}
 
 		log.WithFields(log.Fields{"config": newConfig}).Debug("Setting newConfig variables. preparing to run. ")
 		client, err := client()
