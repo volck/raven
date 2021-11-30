@@ -55,7 +55,6 @@ func SerializeAndWriteToFile(SealedSecret *sealedSecretPkg.SealedSecret, fullPat
 		log.WithFields(log.Fields{"fullPath": fullPath, "error": err.Error()}).Fatal("SerializeAndWriteToFile.e.encode")
 		WriteErrorToTerminationLog(err.Error())
 	}
-	initKubernetesSearch(SealedSecret.Name, newConfig)
 }
 
 /*
