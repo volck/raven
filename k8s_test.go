@@ -201,8 +201,8 @@ emxMCi0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
 }
 
 func TestCleanKubernetes(t *testing.T) {
-	kubernetesclean := os.Getenv("KUBERNETESCLEAN")
-	if kubernetesclean == "" {
+	kubernetesRemove := os.Getenv("KUBERNETESREMOVE")
+	if kubernetesRemove == "" {
 		t.Fatal("set correct env variables.")
 	} else {
 		Clientset := testclient.NewSimpleClientset()
@@ -286,7 +286,7 @@ func TestCleanKubernetes(t *testing.T) {
 			fmt.Println("k8slist error", err)
 		}
 
-		cleanKubernetes(picked, k8slistPre, config)
+		kubernetesRemove(picked, k8slistPre, config)
 
 		k8slistAfter, err := kubernetesSecretList(config)
 
@@ -302,8 +302,8 @@ func TestCleanKubernetes(t *testing.T) {
 }
 
 func TestMonitorForSecret_find_secret(t *testing.T) {
-	kubernetesclean := os.Getenv("KUBERNETESCLEAN")
-	if kubernetesclean == "" {
+	kubernetesMonitor := os.Getenv("KUBERNETESMONITOR")
+	if kubernetesMonitor == "" {
 		t.Fatal("set correct env variables.")
 	} else {
 		Clientset := testclient.NewSimpleClientset()
@@ -369,8 +369,8 @@ func TestMonitorForSecret_find_secret(t *testing.T) {
 }
 
 func TestMonitorForSecret_ShouldExpire(t *testing.T) {
-	kubernetesclean := os.Getenv("KUBERNETESCLEAN")
-	if kubernetesclean == "" {
+	kubernetesMonitor := os.Getenv("KUBERNETESMONITOR")
+	if kubernetesMonitor == "" {
 		t.Fatal("set correct env variables.")
 	} else {
 		Clientset := testclient.NewSimpleClientset()

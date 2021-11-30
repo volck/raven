@@ -166,16 +166,16 @@ func hask8sRavenLabel(secret v1.Secret) bool {
 	return haslabel
 }
 
-func cleanKubernetes(ripeSecrets []string, kubernetesSecretList *v1.SecretList, c config) {
-	kubernetesClean := os.Getenv("KUBERNETESCLEAN")
-	if kubernetesClean == "true" {
+func kubernetesRemove(ripeSecrets []string, kubernetesSecretList *v1.SecretList, c config) {
+	kubernetesRemove := os.Getenv("KUBERNETESREMOVE")
+	if kubernetesRemove == "true" {
 		c.Clientset = initk8sServiceAccount()
 		for _, k8sSecret := range kubernetesSecretList.Items {
 			if stringSliceContainsString(ripeSecrets, k8sSecret.Name) && hask8sRavenLabel(k8sSecret) {
 				log.WithFields(log.Fields{"secret": k8sSecret.Name, "action": "kubernetes.delete", "namespace": c.destEnv}).Info("Secret no longer available in vault or in git. Removing from Kubernetes namespace.")
 				err := c.Clientset.CoreV1().Secrets(c.destEnv).Delete(context.TODO(), k8sSecret.Name, metav1.DeleteOptions{})
 				if err != nil {
-					log.WithFields(log.Fields{"error": err.Error()}).Info("cleanKubernetes clientsetDelete in namespace failed.")
+					log.WithFields(log.Fields{"error": err.Error()}).Info("kubernetesRemove clientsetDelete in namespace failed.")
 
 				}
 			}
@@ -185,8 +185,8 @@ func cleanKubernetes(ripeSecrets []string, kubernetesSecretList *v1.SecretList, 
 }
 
 func searchKubernetesForResults(ctx context.Context, Mysecret string, c config) {
-	kubernetesClean := os.Getenv("KUBERNETESCLEAN")
-	if kubernetesClean == "true" {
+	kubernetesMonitor := os.Getenv("KUBERNETESMONITOR")
+	if kubernetesMonitor == "true" {
 
 		watcher, err := c.Clientset.CoreV1().Secrets(c.destEnv).Watch(context.Background(), metav1.ListOptions{})
 		if err != nil {
@@ -209,8 +209,8 @@ func searchKubernetesForResults(ctx context.Context, Mysecret string, c config) 
 
 func initKubernetesSearch(secret string, c config) {
 
-	kubernetesClean := os.Getenv("KUBERNETESCLEAN")
-	if kubernetesClean == "true" {
+	kubernetesMonitor := os.Getenv("KUBERNETESMONITOR")
+	if kubernetesMonitor == "true" {
 		c.Clientset = initk8sServiceAccount()
 		ctx := context.Background()
 		ctxWithTimeout, cancel := context.WithTimeout(ctx, time.Duration(5)*time.Minute)
@@ -220,8 +220,8 @@ func initKubernetesSearch(secret string, c config) {
 }
 
 func monitorMessages(watchlist []string) {
-	kubernetesClean := os.Getenv("KUBERNETESCLEAN")
-	if kubernetesClean == "true" {
+	kubernetesMonitor := os.Getenv("KUBERNETESMONITOR")
+	if kubernetesMonitor == "true" {
 		log.WithFields(log.Fields{"action": "kubernetes.lookup.secret.start", "secret": watchlist}).Info("Raven starting search for secret in namespace")
 		for {
 			for i := 0; i < 1; i++ {
