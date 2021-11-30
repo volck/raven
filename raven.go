@@ -154,6 +154,12 @@ func main() {
 		newConfig.repoUrl = *repoUrl
 		newConfig.DocumentationKeys = initAdditionalKeys() // we make sure that if the env here is set we can allow multiple descriptional fields in annotations.
 
+		kubernetesMonitor := os.Getenv("KUBERNETESMONITOR")
+		kubernetesRemove := os.Getenv("KUBERNETESREMOVE")
+		if kubernetesMonitor == "true" || kubernetesRemove == "true" {
+			newConfig.Clientset = initk8sServiceAccount()
+		}
+
 
 		log.WithFields(log.Fields{"config": newConfig}).Debug("Setting newConfig variables. preparing to run. ")
 		client, err := client()
