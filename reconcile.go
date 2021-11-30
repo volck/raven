@@ -37,7 +37,7 @@ func HarvestRipeSecrets(RipeSecrets []string, config config) {
 			log.WithFields(log.Fields{"err": err}).Error("harvestripesecret secretlist fetch failed")
 		}
 
-		cleanKubernetes(RipeSecrets, kubernetesSecretList, newConfig)
+		kubernetesRemove(RipeSecrets, kubernetesSecretList, newConfig)
 		log.WithFields(log.Fields{}).Debug("HarvestRipeSecrets done")
 	}
 }
