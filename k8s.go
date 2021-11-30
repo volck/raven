@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"github.com/hashicorp/vault/api"
 	log "github.com/sirupsen/logrus"
-	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
@@ -148,9 +147,8 @@ func initk8sServiceAccount() *kubernetes.Clientset {
 
 }
 
-func kubernetesSecretList(c config) (*corev1.SecretList, error) {
-	c.Clientset = initk8sServiceAccount()
-	sl, err := c.Clientset.CoreV1().Secrets(c.destEnv).List(context.TODO(), metav1.ListOptions{})
+func kubernetesSecretList(c kubernetes.Interface, destEnv string) (*v1.SecretList, error) {
+	sl, err := c.CoreV1().Secrets(destEnv).List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		fmt.Println("clientset secrets.err", err)
 	}
@@ -166,14 +164,13 @@ func hask8sRavenLabel(secret v1.Secret) bool {
 	return haslabel
 }
 
-func kubernetesRemove(ripeSecrets []string, kubernetesSecretList *v1.SecretList, c config) {
+func kubernetesRemove(ripeSecrets []string, kubernetesSecretList *v1.SecretList, clientSet kubernetes.Interface, destEnv string) {
 	kubernetesRemove := os.Getenv("KUBERNETESREMOVE")
 	if kubernetesRemove == "true" {
-		c.Clientset = initk8sServiceAccount()
 		for _, k8sSecret := range kubernetesSecretList.Items {
 			if stringSliceContainsString(ripeSecrets, k8sSecret.Name) && hask8sRavenLabel(k8sSecret) {
-				log.WithFields(log.Fields{"secret": k8sSecret.Name, "action": "kubernetes.delete", "namespace": c.destEnv}).Info("Secret no longer available in vault or in git. Removing from Kubernetes namespace.")
-				err := c.Clientset.CoreV1().Secrets(c.destEnv).Delete(context.TODO(), k8sSecret.Name, metav1.DeleteOptions{})
+				log.WithFields(log.Fields{"secret": k8sSecret.Name, "action": "kubernetes.delete", "namespace": destEnv}).Info("Secret no longer available in vault or in git. Removing from Kubernetes namespace.")
+				err := clientSet.CoreV1().Secrets(destEnv).Delete(context.TODO(), k8sSecret.Name, metav1.DeleteOptions{})
 				if err != nil {
 					log.WithFields(log.Fields{"error": err.Error()}).Info("kubernetesRemove clientsetDelete in namespace failed.")
 
@@ -211,7 +208,7 @@ func initKubernetesSearch(secret string, c config) {
 
 	kubernetesMonitor := os.Getenv("KUBERNETESMONITOR")
 	if kubernetesMonitor == "true" {
-		c.Clientset = initk8sServiceAccount()
+
 		ctx := context.Background()
 		ctxWithTimeout, cancel := context.WithTimeout(ctx, time.Duration(5)*time.Minute)
 		go searchKubernetesForResults(ctxWithTimeout, secret, c)
