@@ -31,14 +31,17 @@ func HarvestRipeSecrets(RipeSecrets []string, config config) {
 			setPushOptions(config, repo, commit)
 			logHarvestDone(repo, commit)
 		}
-
-		kubernetesSecretList, err := kubernetesSecretList(config)
-		if err != nil {
-			log.WithFields(log.Fields{"err": err}).Error("harvestripesecret secretlist fetch failed")
+		kubernetesremove := os.Getenv("KUBERNETESREMOVE")
+		if kubernetesremove == "true" {
+			config.Clientset = initk8sServiceAccount()
+			kubernetesSecretList, err := kubernetesSecretList(config.Clientset, config.destEnv)
+			if err != nil {
+				log.WithFields(log.Fields{"err": err}).Error("harvestripesecret secretlist fetch failed")
+			}
+			config.Clientset = initk8sServiceAccount()
+			kubernetesRemove(RipeSecrets, kubernetesSecretList, config.Clientset, config.destEnv)
+			log.WithFields(log.Fields{}).Debug("HarvestRipeSecrets done")
 		}
-
-		kubernetesRemove(RipeSecrets, kubernetesSecretList, newConfig)
-		log.WithFields(log.Fields{}).Debug("HarvestRipeSecrets done")
 	}
 }
 
