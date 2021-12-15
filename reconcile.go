@@ -8,6 +8,7 @@ import (
 	k8sJson "k8s.io/apimachinery/pkg/runtime/serializer/json"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 /*
@@ -69,13 +70,21 @@ makes sure that basePath exists for SerializeAndWriteToFile, returning basePath.
 */
 
 func ensurePathandreturnWritePath(config config, secretName string) (basePath string) {
-
+	// handle subdirectories
+	subdir := ""
+	subdirs := strings.Split(secretName, "/")
+	// if length is 1, it means Split just returned secret name, aka no subdir
+	if len(subdirs) > 1 {
+		s := subdirs[:len(subdirs)-1]
+		subdir = strings.Join(s, "/")
+	}
 	base := filepath.Join(config.clonePath, "declarative", config.destEnv, "sealedsecrets")
-	err := os.MkdirAll(base, os.ModePerm)
+	createPath := filepath.Join(base, subdir)
+	err := os.MkdirAll(createPath, os.ModePerm)
 	if err != nil {
 		log.WithFields(log.Fields{"error": err.Error()}).Fatal("ensurePathandreturnWritePath.os.Mkdir")
 	}
-	basePath = base + "/" + secretName + ".yaml"
+	basePath = filepath.Join(base, secretName + ".yaml")
 	return
 }
 

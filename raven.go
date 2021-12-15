@@ -180,22 +180,23 @@ func main() {
 			}
 
 			GitClone(newConfig)
-			State := &api.Secret{}
+			var State []interface{}
 			if err != nil {
 				log.WithFields(log.Fields{"error": err}).Error("client not initialized")
 			}
 			for {
 				if validToken(client) {
 					log.WithFields(log.Fields{}).Debug("Validated Token: grabbing list of secrets")
-					var list, err = getAllKVs(client, newConfig)
+					//var list, err = getAllKVs(client, newConfig)
+					var list, err = traverseVaultAndGetKVs(client, newConfig, "")
 					if err != nil {
 						log.WithFields(log.Fields{"error": err}).Error("getAllKVs list error")
 					}
 					if list == nil {
 						cleanDeadEntries()
 					} else {
-						secretList := list.Data["keys"].([]interface{})
-						persistVaultChanges(secretList, client)
+						//secretList := list.Data["keys"].([]interface{})
+						persistVaultChanges(list, client)
 						//..and push new files if there were any. If there are any ripe secrets, delete.,
 						PickedRipeSecrets := PickRipeSecrets(State, list)
 						HarvestRipeSecrets(PickedRipeSecrets, newConfig)

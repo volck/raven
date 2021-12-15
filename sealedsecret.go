@@ -96,16 +96,16 @@ func createSealedSecret(publickeyPath string, k8ssecret *v1.Secret) (sealedSecre
 	return
 }
 
-func firstRun(PreviousKV *api.Secret, NewKV *api.Secret) bool {
+func firstRun(PreviousKV []interface{}, NewKV []interface{}) bool {
 	validator := false
-	if PreviousKV.Data["keys"] == nil || NewKV.Data["keys"] == nil {
-		log.WithFields(log.Fields{"previousKeys": PreviousKV.Data["keys"], "newKV": NewKV.Data["keys"]}).Debug("PickRipeSecrets compared lists and found that either of the lists were nil")
+	if PreviousKV == nil || NewKV == nil {
+		log.WithFields(log.Fields{"previousKeys": PreviousKV, "newKV": NewKV}).Debug("PickRipeSecrets compared lists and found that either of the lists were nil")
 		validator = true
 	}
 	return validator
 }
 
-func listsEmpty(PreviousKV *api.Secret, NewKV *api.Secret) bool {
+func listsEmpty(PreviousKV []interface{}, NewKV []interface{}) bool {
 	emptyList := false
 	if NewKV == nil || PreviousKV == nil {
 		emptyList = true
@@ -113,21 +113,21 @@ func listsEmpty(PreviousKV *api.Secret, NewKV *api.Secret) bool {
 	return emptyList
 }
 
-func listsMatch(PreviousKV *api.Secret, NewKV *api.Secret) bool {
+func listsMatch(PreviousKV []interface{}, NewKV []interface{}) bool {
 	validator := false
 
-	if reflect.DeepEqual(PreviousKV.Data["keys"], NewKV.Data["keys"]) {
-		log.WithFields(log.Fields{"previousKeys": PreviousKV.Data["keys"], "newKV": NewKV.Data["keys"]}).Debug("PickRipeSecrets: Lists match.")
+	if reflect.DeepEqual(PreviousKV, NewKV) {
+		log.WithFields(log.Fields{"previousKeys": PreviousKV, "newKV": NewKV}).Debug("PickRipeSecrets: Lists match.")
 		validator = true
 	}
 	return validator
 }
 
-func findRipeSecrets(PreviousKV *api.Secret, NewKV *api.Secret) (RipeSecrets []string) {
-	for _, v := range PreviousKV.Data["keys"].([]interface{}) {
-		containsString := SliceContainsString(NewKV.Data["keys"].([]interface{}), v.(string))
+func findRipeSecrets(PreviousKV []interface{}, NewKV []interface{}) (RipeSecrets []string) {
+	for _, v := range PreviousKV {
+		containsString := SliceContainsString(NewKV, v.(string))
 		if !containsString {
-			log.WithFields(log.Fields{"PreviousKV.Data": PreviousKV.Data, "action": "delete"}).Debug("PickRipeSecrets: We have found a ripe secret. adding it to list of ripesecrets now.")
+			log.WithFields(log.Fields{"PreviousKV": PreviousKV, "action": "delete"}).Debug("PickRipeSecrets: We have found a ripe secret. adding it to list of ripesecrets now.")
 			log.WithFields(log.Fields{"RipeSecret": v.(string), "action": "delete"}).Info("PickRipeSecrets: We have found a ripe secret. adding it to list of ripesecrets now.")
 			RipeSecrets = append(RipeSecrets, v.(string))
 			log.WithFields(log.Fields{"RipeSecret": RipeSecrets}).Debug("PickRipeSecrets final list of ripe secrets")

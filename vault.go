@@ -5,6 +5,7 @@ import (
 	"github.com/go-git/go-git/v5"
 	"net/http"
 	"path/filepath"
+	"strings"
 
 	sealedSecretPkg "github.com/bitnami-labs/sealed-secrets/pkg/apis/sealed-secrets/v1alpha1"
 	"github.com/hashicorp/vault/api"
@@ -48,7 +49,7 @@ func getKVAndCreateSealedSecret(client *api.Client, config config, secretName st
 	return
 }
 
-func PickRipeSecrets(PreviousKV *api.Secret, NewKV *api.Secret) (RipeSecrets []string) {
+func PickRipeSecrets(PreviousKV []interface{}, NewKV []interface{}) (RipeSecrets []string) {
 	if listsEmpty(PreviousKV, NewKV) {
 	} else if !firstRun(PreviousKV, NewKV) && !listsMatch(PreviousKV, NewKV) {
 		RipeSecrets = findRipeSecrets(PreviousKV, NewKV)
@@ -78,6 +79,37 @@ func getAllKVs(client *api.Client, config config) (Secret *api.Secret, err error
 		log.WithFields(log.Fields{"error": err}).Error("getAllKVs list error")
 	}
 	return Secret, err
+}
+
+// take a starting path and return all KVs below it
+func traverseVaultAndGetKVs(client *api.Client, config config, subdir string) (Secrets []interface{}, err error) {
+	url := fmt.Sprintf("%s/metadata%s", config.secretEngine, subdir)
+	list, err := client.Logical().List(url)
+	if err != nil {
+		log.WithFields(log.Fields{"error": err}).Error("getAllKVs list error")
+	}
+	secretList := list.Data["keys"].([]interface{})
+	for _, secret := range secretList {
+		if strings.HasSuffix(secret.(string), "/") {
+			subdirList, _ := traverseVaultAndGetKVs(client, config, filepath.Join("/", secret.(string)))
+			Secrets = mergeSecretLists(Secrets, subdirList)
+		} else {
+			sub := filepath.Join(subdir, secret.(string))
+			Secrets = append(Secrets, sub)
+		}
+	}
+	return Secrets, err
+}
+
+func mergeSecretLists(list1 []interface{}, list2 []interface{}) []interface{} {
+	result := make([]interface{}, 0, len(list1)+len(list2))
+	for i := range list1 {
+		result = append(result, list1[i])
+	}
+	for i := range list2 {
+		result = append(result, list2[i])
+	}
+	return result
 }
 
 /*
