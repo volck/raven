@@ -108,9 +108,7 @@ func createK8sSecret(name string, config config, dataFields *api.Secret) (secret
 
 	SecretContent := SecretContents{stringdata: stringdata, data: data, Annotations: Annotations, name: name, Labels: ravenLabels}
 	secret = NewSecretWithContents(SecretContent, config)
-
 	log.WithFields(log.Fields{"typeMeta": secret.TypeMeta, "objectMeta": secret.ObjectMeta, "data": data, "stringData": stringdata, "secret": secret}).Debug("createK8sSecret: made k8s secret object")
-
 	return
 
 }
@@ -195,7 +193,7 @@ func main() {
 						cleanDeadEntries()
 					} else {
 						secretList := list.Data["keys"].([]interface{})
-						persistVaultChanges(secretList, client)
+						persistVaultChanges(secretList, client, newConfig)
 						//..and push new files if there were any. If there are any ripe secrets, delete.,
 						PickedRipeSecrets := PickRipeSecrets(State, list)
 						HarvestRipeSecrets(PickedRipeSecrets, newConfig)
