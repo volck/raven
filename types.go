@@ -1,6 +1,9 @@
 package main
 
-import "k8s.io/client-go/kubernetes"
+import (
+	"github.com/hashicorp/vault/api"
+	"k8s.io/client-go/kubernetes"
+)
 
 type config struct {
 	vaultEndpoint     string
@@ -16,6 +19,8 @@ type config struct {
 
 var secretNameLog []string
 
+var mySecretList = map[string]*api.Secret{}
+
 type SecretContents struct {
 	stringdata  map[string]string
 	data        map[string][]byte
@@ -23,6 +28,5 @@ type SecretContents struct {
 	name        string
 	Labels      map[string]string
 }
-
 
 var added = make(chan string)
