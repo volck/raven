@@ -24,16 +24,16 @@ func forcenewSecrets(client *api.Client, config2 config) {
 	if errorHere != nil {
 		log.WithFields(log.Fields{"list": list, "error": errorHere.Error()}).Warn("forceRefresh().getAllKVs failed")
 	}
+
 	if list != nil {
 		for _, secret := range list.Data["keys"].([]interface{}) {
 			SealedSecret, _ := getKVAndCreateSealedSecret(client, config2, secret.(string))
 			newBase := ensurePathandreturnWritePath(config2, secret.(string))
 			SerializeAndWriteToFile(SealedSecret, newBase)
 			log.WithFields(log.Fields{"secret": secret, "newBase": newBase}).Info("forceRefresh() rewrote secret")
-
 		}
 	} else {
-		log.WithFields(log.Fields{"secretList": list, }).Info("forceRefresh() called, list is empty. doing nothing.")
+		log.WithFields(log.Fields{"secretList": list}).Info("forceRefresh() called, list is empty. doing nothing.")
 	}
 }
 
