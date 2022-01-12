@@ -71,13 +71,67 @@ func TestGetKVAndCreateNormalSealedSecret(t *testing.T) {
 	secretEngine := "kv"
 	secretName := "secret"
 	pemFile := `cert.crt`
-
-	SingleKVFromVault := getSingleKV(client, secretEngine, secretName)
-	k8sSecret := createK8sSecret(secretName, config, SingleKVFromVault)
+	// SingleKVFromVault := getSingleKV(client, secretEngine, secretName)
+	input := fmt.Sprintf("%s/%s", secretEngine, secretName)
+	kvVaultList := iterateList(input, client, "")
+	fmt.Println("kvVaultList", kvVaultList)
+	k8sSecret := createK8sSecret(secretName, config, kvVaultList)
+	fmt.Println("we created a k8ssecret called", k8sSecret.Name, k8sSecret)
 	SealedSecret := createSealedSecret(pemFile, &k8sSecret)
+	fmt.Println("we converted that k8ssecret to a sealedSecret", SealedSecret.Name, SealedSecret)
 	fmt.Printf("k8sSecret.Data: %v \n k8sSecret.StringData: %v \n k8sSecret.Annotations: %v \n", k8sSecret.Data, k8sSecret.StringData, k8sSecret.Annotations)
 	fmt.Printf("SealedSecret: %v \n SealedSecret.Annotations: %v \n", SealedSecret, k8sSecret.Annotations)
 
+}
+
+func TestCreateThreeSealedSecrets(t *testing.T) {
+
+	t.Parallel()
+
+	cluster := createVaultTestCluster(t)
+	defer cluster.Cleanup()
+	client := cluster.Cores[0].Client
+	config := config{
+		vaultEndpoint: cluster.Cores[0].Client.Address(),
+		secretEngine:  "kv",
+		token:         client.Token(),
+		destEnv:       "kv",
+		pemFile:       "cert.crt",
+	}
+	// make testable secrets for cluster
+	secretOne := map[string]interface{}{
+		"data":     map[string]interface{}{"SecretOne": "secretValue"},
+		"metadata": map[string]interface{}{"version": 2},
+	}
+	secretTwo := map[string]interface{}{
+		"data":     map[string]interface{}{"secretTwo": "secretValue"},
+		"metadata": map[string]interface{}{"version": 2},
+	}
+	secretThree := map[string]interface{}{
+		"data":     map[string]interface{}{"secretThree": "secretValue"},
+		"metadata": map[string]interface{}{"version": 2},
+	}
+	secretThreev2 := map[string]interface{}{
+		"data":     map[string]interface{}{"secretThreev2": "secretValue"},
+		"metadata": map[string]interface{}{"version": 2},
+	}
+
+	firstPath := "kv/data/subpathone"
+	secondPath := "kv/data/subpathone/secretSecondPath"
+	thirdPath := "kv/data/subpathone/subpathtwo/secretThirdPath"
+	thirdPathv2 := "kv/data/subpathone/subpathtwo/secretThirdPathV2"
+	client.Logical().Write(firstPath, secretOne)
+	client.Logical().Write(secondPath, secretTwo)
+	client.Logical().Write(thirdPath, secretThree)
+	client.Logical().Write(thirdPathv2, secretThreev2)
+
+	list, err := getAllKVs(client, config)
+	if err != nil {
+		fmt.Println(err)
+	}
+	secretList := list.Data["keys"].([]interface{})
+
+	persistVaultChanges(secretList, client, config)
 }
 
 
@@ -95,7 +149,7 @@ func TestGetKVAndCreateNormalSealedSecretWithNoDataFields(t *testing.T) {
 	}
 	// make testable secrets for cluster
 	secrets := map[string]interface{}{
-		"data":    nil,
+		"data":     nil,
 		"metadata": map[string]interface{}{"version": 2},
 	}
 	client.Logical().Write("kv/data/secret", secrets)
@@ -111,8 +165,6 @@ func TestGetKVAndCreateNormalSealedSecretWithNoDataFields(t *testing.T) {
 	fmt.Printf("SealedSecret: %v \n SealedSecret.Annotations: %v \n", SealedSecret, k8sSecret.Annotations)
 
 }
-
-
 
 func TestGetKVAndCreateSealedSecretWithDocumentKeysAnnotations(t *testing.T) {
 	t.Parallel()
