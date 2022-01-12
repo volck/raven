@@ -6,7 +6,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	sealedSecretPkg "github.com/bitnami-labs/sealed-secrets/pkg/apis/sealed-secrets/v1alpha1"
-	kv "github.com/hashicorp/vault-plugin-secrets-kv"
+	. "github.com/hashicorp/vault-plugin-secrets-kv"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"testing"
@@ -47,6 +47,14 @@ func TestGetSingleKV(t *testing.T) {
 	defer cluster.Cleanup()
 	client := cluster.Cores[0].Client
 
+	config := config{
+		vaultEndpoint: cluster.Cores[0].Client.Address(),
+		secretEngine:  "kv",
+		token:         client.Token(),
+		destEnv:       "kv",
+		pemFile:       "cert.crt",
+	}
+
 	// make testable secrets for cluster
 	secrets := map[string]interface{}{
 		"data":     map[string]interface{}{"secretKey": "secretValue"},
@@ -54,23 +62,165 @@ func TestGetSingleKV(t *testing.T) {
 	}
 	client.Logical().Write("kv/data/secret", secrets)
 
-	secret := getSingleKV(client, "kv", "secret")
-	fmt.Println("TestGetSingleKV,", secret)
+	list, err := getAllKVs(client, config)
+	if err != nil {
+		fmt.Println(err)
+	}
+	secretList := list.Data["keys"].([]interface{})
+
+	persistVaultChanges(secretList, client, config)
+
+	fmt.Println(mySecretList["secret"])
 }
 
-func TestValidateSelfToken(t *testing.T) {
+func TestReadAllKV(t *testing.T) {
+
+	cluster := createVaultTestCluster(t)
+	defer cluster.Cleanup()
+	client := cluster.Cores[0].Client
+
+	// make testable secrets for cluster
+	secretOne := map[string]interface{}{
+		"data":     map[string]interface{}{"SecretOne": "secretValue"},
+		"metadata": map[string]interface{}{"version": 2},
+	}
+	secretTwo := map[string]interface{}{
+		"data":     map[string]interface{}{"secretTwo": "secretValue"},
+		"metadata": map[string]interface{}{"version": 2},
+	}
+	secretThree := map[string]interface{}{
+		"data":     map[string]interface{}{"secretThree": "secretValue"},
+		"metadata": map[string]interface{}{"version": 2},
+	}
+	secretThreev2 := map[string]interface{}{
+		"data":     map[string]interface{}{"secretThreev2": "secretValue"},
+		"metadata": map[string]interface{}{"version": 2},
+	}
+
+	firstPath := "kv/data/subpathone/"
+	secondPath := "kv/data/subpathone/subpathtwo"
+	thirdPath := "kv/data/subpathone/subpathtwo/subpaththree"
+	thirdPathv2 := "kv/data/subpathone/subpathtwo/subpaththree"
+	client.Logical().Write(firstPath, secretOne)
+	client.Logical().Write(secondPath, secretTwo)
+	client.Logical().Write(thirdPath, secretThree)
+	client.Logical().Write(thirdPathv2, secretThreev2)
+
+	iterateList("kv/", client, "")
+
+	if len(mySecretList) != 3 {
+		t.Fatal("not all secrets found. should be 4 secrets")
+		for k, v := range mySecretList {
+			fmt.Println(k, v)
+		}
+	}
+
+}
+
+func TestPersistVaultChanges(t *testing.T) {
+
 	t.Parallel()
 
 	cluster := createVaultTestCluster(t)
 	defer cluster.Cleanup()
 	client := cluster.Cores[0].Client
-	fmt.Println("proof of TestvalidateSelftoken")
-	valid := validToken(client)
-	if !valid {
-		t.Error("valid:", valid, client.Token())
+	config := config{
+		vaultEndpoint: cluster.Cores[0].Client.Address(),
+		secretEngine:  "kv",
+		token:         client.Token(),
+		destEnv:       "kv",
+		pemFile:       "cert.crt",
+	}
+	// make testable secrets for cluster
+	secretOne := map[string]interface{}{
+		"data":     map[string]interface{}{"SecretOne": "secretValue"},
+		"metadata": map[string]interface{}{"version": 2},
+	}
+	secretTwo := map[string]interface{}{
+		"data":     map[string]interface{}{"secretTwo": "secretValue"},
+		"metadata": map[string]interface{}{"version": 2},
+	}
+	secretThree := map[string]interface{}{
+		"data":     map[string]interface{}{"secretThree": "secretValue"},
+		"metadata": map[string]interface{}{"version": 2},
+	}
+	secretThreev2 := map[string]interface{}{
+		"data":     map[string]interface{}{"secretThreev2": "secretValue"},
+		"metadata": map[string]interface{}{"version": 2},
+	}
+
+	firstPath := "kv/data/subpathone"
+	secondPath := "kv/data/subpathone/secretSecondPath"
+	thirdPath := "kv/data/subpathone/subpathtwo/secretThirdPath"
+	thirdPathv2 := "kv/data/subpathone/subpathtwo/secretThirdPathV2"
+	client.Logical().Write(firstPath, secretOne)
+	client.Logical().Write(secondPath, secretTwo)
+	client.Logical().Write(thirdPath, secretThree)
+	client.Logical().Write(thirdPathv2, secretThreev2)
+
+	list, err := getAllKVs(client, config)
+	if err != nil {
+		fmt.Println(err)
+	}
+	secretList := list.Data["keys"].([]interface{})
+	fmt.Println(secretList)
+
+}
+
+func TestGetSingleKVMultipleSubPath(t *testing.T) {
+	t.Parallel()
+
+	cluster := createVaultTestCluster(t)
+	defer cluster.Cleanup()
+	client := cluster.Cores[0].Client
+
+	// make testable secrets for cluster
+	secretOne := map[string]interface{}{
+		"data":     map[string]interface{}{"SecretOne": "secretValue"},
+		"metadata": map[string]interface{}{"version": 2},
+	}
+
+	secretTwo := map[string]interface{}{
+		"data":     map[string]interface{}{"secretTwo": "secretValue"},
+		"metadata": map[string]interface{}{"version": 2},
+	}
+
+	secretThree := map[string]interface{}{
+		"data":     map[string]interface{}{"secretThree": "secretValue"},
+		"metadata": map[string]interface{}{"version": 2},
+	}
+	secretThreev2 := map[string]interface{}{
+		"data":     map[string]interface{}{"secretThreev2": "secretValue"},
+		"metadata": map[string]interface{}{"version": 2},
+	}
+
+	firstPath := "kv/data/subpathone/"
+	secondPath := "kv/data/subpathone/subpathtwo/"
+	thirdPath := "kv/data/subpathone/subpathtwo/subpaththree/"
+	thirdPathv2 := "kv/data/subpathone/subpathtwo/subpaththree/"
+	client.Logical().Write(firstPath, secretOne)
+	client.Logical().Write(secondPath, secretTwo)
+	client.Logical().Write(thirdPath, secretThree)
+	client.Logical().Write(thirdPathv2, secretThreev2)
+
+	c := config{secretEngine: "kv"}
+
+	secretList, err := getAllKVs(client, c)
+	if err != nil {
+		fmt.Println("getallKVS", err)
+	}
+
+	for _, secret := range secretList.Data["keys"].([]interface{}) {
+		secret := getSingleKV(client, "kv", secret.(string))
+		if secret == nil {
+			fmt.Println("nil pointer exception")
+		} else {
+			fmt.Println("got secret", secret)
+		}
 	}
 
 }
+
 
 func ReturnPrivateKey(t *testing.T) map[string]*rsa.PrivateKey {
 	t.Helper()
@@ -270,7 +420,7 @@ func createVaultTestCluster(t *testing.T) *hashivault.TestCluster {
 
 	coreConfig := &hashivault.CoreConfig{
 		LogicalBackends: map[string]logical.Factory{
-			"kv": kv.Factory,
+			"kv": Factory,
 		},
 	}
 	cluster := hashivault.NewTestCluster(t, coreConfig, &hashivault.TestClusterOptions{
