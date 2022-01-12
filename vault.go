@@ -2,13 +2,13 @@ package main
 
 import (
 	"fmt"
-	"github.com/go-git/go-git/v5"
-	"net/http"
-	"path/filepath"
-
 	sealedSecretPkg "github.com/bitnami-labs/sealed-secrets/pkg/apis/sealed-secrets/v1alpha1"
+	"github.com/go-git/go-git/v5"
 	"github.com/hashicorp/vault/api"
 	log "github.com/sirupsen/logrus"
+	"net/http"
+	"path/filepath"
+	"strings"
 )
 
 // We need to init the client a lot so this is a helper function which returns a fresh client.
@@ -37,14 +37,16 @@ getKVAndCreateSealedSecret combines several "maker-methods":
 
 */
 
-func getKVAndCreateSealedSecret(client *api.Client, config config, secretName string) (SealedSecret *sealedSecretPkg.SealedSecret, SingleKVFromVault *api.Secret) {
+func getKVAndCreateSealedSecret(client *api.Client, config config, secretName string) (sealedSecret *sealedSecretPkg.SealedSecret, SingleKVFromVault *api.Secret) {
+	input := fmt.Sprintf("%s/", config.secretEngine)
+	iterateList(input, client, secretName)
 
-	SingleKVFromVault = getSingleKV(client, config.secretEngine, secretName)
-	log.WithFields(log.Fields{"SingleKVFromVault": SingleKVFromVault}).Debug("getKVAndCreateSealedSecret.SingleKVFromVault")
-	k8sSecret := createK8sSecret(secretName, config, SingleKVFromVault)
-	log.WithFields(log.Fields{"k8sSecret": k8sSecret}).Debug("getKVAndCreateSealedSecret.k8sSecret")
-	SealedSecret = createSealedSecret(config.pemFile, &k8sSecret)
-	log.WithFields(log.Fields{"SealedSecret": SealedSecret}).Debug("getKVAndCreateSealedSecret.SealedSecret")
+	for path, val := range mySecretList {
+		log.WithFields(log.Fields{"SingleKVFromVault": val}).Debug("getKVAndCreateSealedSecret.SingleKVFromVault")
+		k8sSecret := createK8sSecret(path, config, val)
+		createSealedSecret(config.pemFile, &k8sSecret)
+	}
+
 	return
 }
 
@@ -84,28 +86,56 @@ func getAllKVs(client *api.Client, config config) (Secret *api.Secret, err error
 getsingleKV() used to iterate struct from getAllKVs(), takes secretname as input, returns struct for single secret. Requires uniform data.
 */
 
+func iterateList(input string, c *api.Client, secretName string) *api.Secret {
+	p := ""
+	if !strings.HasSuffix(input, "/") {
+		p := strings.Replace(input, "/", "/data/", 1)
+		Secret, err := c.Logical().Read(p)
+		if err != nil {
+			//fmt.Println("list data nil and we try to return a secret", err)
+		}
+
+		secretNameList := strings.Split(p, "/")
+		pName := secretNameList[len(secretNameList)-1]
+		mySecretList[pName] = Secret
+		return Secret
+	}
+
+	//fmt.Println("first replacement of metadata", input, p)
+	p = strings.Replace(input, "/", "/metadata/", 1)
+
+	list, err := c.Logical().List(p) // kv/subpathone/metadata == kv/metadata/subpathone/
+	if err != nil {
+		//fmt.Println("list failed", err, list)
+		return nil
+	}
+	if list.Data == nil {
+		return nil
+	}
+
+	p = ""
+
+	for _, k := range list.Data["keys"].([]interface{}) {
+		p := strings.Replace(input, "/", "/metadata/", 1)
+		if strings.HasSuffix(p, "/") {
+			p = input + k.(string)
+		} else {
+			p = p + "/" + k.(string)
+		}
+		iterateList(p, c, "")
+	}
+
+	return nil
+}
+
 func getSingleKV(client *api.Client, env string, secretname string) (Secret *api.Secret) {
 	//url := vaultEndPoint + "/v1/" + env + "/data/" + secretname
-
 	path := fmt.Sprintf("%s/data/%s", env, secretname)
-
 	Secret, err := client.Logical().Read(path)
 	if err != nil {
 		log.WithFields(log.Fields{"error": err}).Error("getSingleKV client read error")
 	}
-	return
-
-}
-func RenewSelfToken(token string, vaultEndpoint string) {
-	client, err := client()
-	if err != nil {
-		log.WithFields(log.Fields{"error": err}).Error("RenewSelfToken client error")
-	}
-	clientToken, err := client.Auth().Token().RenewSelf(300) // renew for 5 more minutes.
-	fmt.Println(clientToken)
-	if err != nil {
-		log.WithFields(log.Fields{"error": err}).Error("client.token.renewself() client error")
-	}
+	return Secret
 
 }
 
