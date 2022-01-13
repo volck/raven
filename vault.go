@@ -50,7 +50,7 @@ func getKVAndCreateSealedSecret(client *api.Client, config config, secretName st
 	return
 }
 
-func PickRipeSecrets(PreviousKV *api.Secret, NewKV *api.Secret) (RipeSecrets []string) {
+func PickRipeSecrets(PreviousKV map[string]*api.Secret, NewKV map[string]*api.Secret) (RipeSecrets []string) {
 	if listsEmpty(PreviousKV, NewKV) {
 	} else if !firstRun(PreviousKV, NewKV) && !listsMatch(PreviousKV, NewKV) {
 		RipeSecrets = findRipeSecrets(PreviousKV, NewKV)
