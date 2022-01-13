@@ -60,7 +60,7 @@ func TestGetSingleKV(t *testing.T) {
 		"data":     map[string]interface{}{"secretKey": "secretValue"},
 		"metadata": map[string]interface{}{"version": 2},
 	}
-	client.Logical().Write("kv/data/secret", secrets)
+	client.Logical().Write("kv/data/TestGetSingleKVSecret", secrets)
 
 	list, err := getAllKVs(client, config)
 	if err != nil {
@@ -70,11 +70,10 @@ func TestGetSingleKV(t *testing.T) {
 
 	persistVaultChanges(secretList, client, config)
 
-	fmt.Println(mySecretList["secret"])
 }
 
 func TestReadAllKV(t *testing.T) {
-
+	//t.Parallel()
 	cluster := createVaultTestCluster(t)
 	defer cluster.Cleanup()
 	client := cluster.Cores[0].Client
@@ -97,22 +96,38 @@ func TestReadAllKV(t *testing.T) {
 		"metadata": map[string]interface{}{"version": 2},
 	}
 
-	firstPath := "kv/data/subpathone/"
-	secondPath := "kv/data/subpathone/subpathtwo"
-	thirdPath := "kv/data/subpathone/subpathtwo/subpaththree"
-	thirdPathv2 := "kv/data/subpathone/subpathtwo/subpaththree"
+	config := config{
+		vaultEndpoint: cluster.Cores[0].Client.Address(),
+		secretEngine:  "kv",
+		token:         client.Token(),
+		destEnv:       "kv",
+		pemFile:       "cert.crt",
+	}
+
+	firstPath := "kv/data/TestReadAllKVsubpathone"
+	secondPath := "kv/data/subpathone/TestReadAllKVsubpathtwo"
+	thirdPath := "kv/data/subpathone/subpathtwo/TestReadAllKVsubpaththree"
+	thirdPathv2 := "kv/data/subpathone/subpathtwo/TestReadAllKVsubpaththree"
 	client.Logical().Write(firstPath, secretOne)
 	client.Logical().Write(secondPath, secretTwo)
 	client.Logical().Write(thirdPath, secretThree)
 	client.Logical().Write(thirdPathv2, secretThreev2)
 
-	iterateList("kv/", client, "")
+	list, err := getAllKVs(client, config)
+	if err != nil {
+		fmt.Println(err)
+	}
+	secretList := list.Data["keys"].([]interface{})
+	mySecretList = map[string]*api.Secret{}
+	persistVaultChanges(secretList, client, config)
 
+	fmt.Println("TestReadAllKV len of mysecretlist:", len(mySecretList))
+
+	for k, v := range mySecretList {
+		fmt.Printf("TestReadAll -  key: %v, value: %v \n", k, v)
+	}
 	if len(mySecretList) != 3 {
-		t.Fatal("not all secrets found. should be 4 secrets")
-		for k, v := range mySecretList {
-			fmt.Println(k, v)
-		}
+		t.Fatal("TestReadAll list != 3. should be 3\n")
 	}
 
 }
@@ -220,7 +235,6 @@ func TestGetSingleKVMultipleSubPath(t *testing.T) {
 	}
 
 }
-
 
 func ReturnPrivateKey(t *testing.T) map[string]*rsa.PrivateKey {
 	t.Helper()
@@ -364,15 +378,25 @@ func TestPickRipeSecretsReturnsOne(t *testing.T) {
 	if err != nil {
 		fmt.Println(err)
 	}
+	previousKV := PreviousKV.Data["keys"].([]interface{})
+
+	persistVaultChanges(previousKV, client, config)
+	fmt.Println("pre: setting state to this", mySecretList)
+	firstState := mySecretList
 
 	deleteTestSecrets(t, client, config, secretName)
 
-	newKV, err := getAllKVs(client, config)
+	NewKV, err := getAllKVs(client, config)
 	if err != nil {
 		fmt.Println(err)
 	}
+	newKV := NewKV.Data["keys"].([]interface{})
+	mySecretList = map[string]*api.Secret{}
+	persistVaultChanges(newKV, client, config)
+	fmt.Println("post: setting state to this", mySecretList)
+	secondState := mySecretList
 
-	picked := PickRipeSecrets(PreviousKV, newKV)
+	picked := PickRipeSecrets(firstState, secondState)
 	fmt.Println(picked, len(picked))
 	if len(picked) == 0 {
 		t.Fatal("PickRipeSecrets should have returned 1 here")
@@ -401,16 +425,25 @@ func TestPickRipeSecretsReturnsNoRipe(t *testing.T) {
 	if err != nil {
 		fmt.Println(err)
 	}
+	previousKV := PreviousKV.Data["keys"].([]interface{})
 
-	newKV, err := getAllKVs(client, config)
+	persistVaultChanges(previousKV, client, config)
+	firstState := mySecretList
+
+	deleteTestSecrets(t, client, config, secretName)
+
+	NewKV, err := getAllKVs(client, config)
 	if err != nil {
 		fmt.Println(err)
 	}
+	newKV := NewKV.Data["keys"].([]interface{})
 
-	picked := PickRipeSecrets(PreviousKV, newKV)
+	persistVaultChanges(newKV, client, config)
+	secondState := mySecretList
+	picked := PickRipeSecrets(firstState, secondState)
 	fmt.Println(picked, len(picked))
 	if len(picked) != 0 {
-		t.Fatal("PickRipeSecrets should have returned 1 here")
+		t.Fatal("PickRipeSecrets should have returned 0 here")
 	}
 }
 
