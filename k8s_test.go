@@ -259,15 +259,18 @@ func TestCleanKubernetes(t *testing.T) {
 	if err != nil {
 		fmt.Println(err)
 	}
-
+	previousKV := PreviousKV.Data["keys"].([]interface{})
+	persistVaultChanges(previousKV, client, config)
+	previouskvlst := mySecretList
 	deleteTestSecrets(t, client, config, secretName)
 
 	newKV, err := getAllKVs(client, config)
 	if err != nil {
 		fmt.Println(err)
 	}
-
-	picked := PickRipeSecrets(PreviousKV, newKV)
+	newkvlst := newKV.Data["keys"].([]interface{})
+	persistVaultChanges(newkvlst,client, config )
+	picked := PickRipeSecrets(previouskvlst, mySecretList)
 	fmt.Println(picked, len(picked))
 
 	if len(picked) == 0 {
