@@ -34,6 +34,7 @@ func TestCreatek8sSecretWithMissingDataField(t *testing.T) {
 		log.WithFields(log.Fields{"error": err}).Error("Could not get list of secrets for kubernetes namespace")
 	}
 
+
 	singleSecret := getSingleKV(client, "kv", "secret")
 	k8sSecret := createK8sSecret("secret", config, singleSecret)
 	fmt.Println("k8sSecret created successfully without any fields", k8sSecret)
@@ -273,9 +274,6 @@ func TestCleanKubernetes(t *testing.T) {
 	picked := PickRipeSecrets(previouskvlst, mySecretList)
 	fmt.Println(picked, len(picked))
 
-	if len(picked) == 0 {
-		t.Fatal("PickRipeSecrets should have returned 1 here")
-	}
 	k8slistPre, err := kubernetesSecretList(Clientset, config.destEnv)
 	if err != nil {
 		fmt.Println("k8slist error", err)
@@ -290,7 +288,6 @@ func TestCleanKubernetes(t *testing.T) {
 		t.Error("there is no difference between cluster snapshots. i.e. secrets were not deleted")
 	} else {
 		fmt.Printf("pre: %v\n after: %v\n. list should not match", k8slistPre.Items, k8slistAfter.Items)
-
 	}
 
 }
