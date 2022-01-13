@@ -178,7 +178,7 @@ func main() {
 			}
 
 			GitClone(newConfig)
-			State := &api.Secret{}
+			State := map[string]*api.Secret{}
 			if err != nil {
 				log.WithFields(log.Fields{"error": err}).Error("client not initialized")
 			}
@@ -192,15 +192,15 @@ func main() {
 					if list == nil {
 						cleanDeadEntries()
 					} else {
+						mySecretList = map[string]*api.Secret{}
 						secretList := list.Data["keys"].([]interface{})
 						persistVaultChanges(secretList, client, newConfig)
 						//..and push new files if there were any. If there are any ripe secrets, delete.,
-						PickedRipeSecrets := PickRipeSecrets(State, list)
+						PickedRipeSecrets := PickRipeSecrets(State, mySecretList)
 						HarvestRipeSecrets(PickedRipeSecrets, newConfig)
 						gitPush(newConfig)
 						log.WithFields(log.Fields{"PickedRipeSecrets": PickedRipeSecrets}).Debug("PickedRipeSecrets list")
-
-						State = list
+						State = mySecretList
 						sleep()
 					}
 				}
