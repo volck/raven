@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/hashicorp/vault/api"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"reflect"
@@ -134,7 +135,6 @@ func TestCreateThreeSealedSecrets(t *testing.T) {
 	persistVaultChanges(secretList, client, config)
 }
 
-
 func TestGetKVAndCreateNormalSealedSecretWithNoDataFields(t *testing.T) {
 	t.Parallel()
 
@@ -246,5 +246,37 @@ func TestCompareThatSealedSecretAndSecretMetadataMatches(t *testing.T) {
 	}
 	fmt.Printf("k8s: %v \n sealed: %v \n", k8sSecret, SealedSecret)
 	fmt.Printf("sealedsecret.name: %v \n k8s.name: %v \n", SealedSecret.Name, k8sSecret.Name)
+
+}
+
+func Test_listsMatchNillist(t *testing.T) {
+	PreviousKV := map[string]*api.Secret{}
+	NewKV := map[string]*api.Secret{}
+	if !listsMatch(PreviousKV, NewKV) {
+		t.Fatal("listsMatchNillist does not match list. lists are the exact same object and should match")
+	}
+}
+
+func Test_listsMatchDiff(t *testing.T) {
+	PreviousKV := map[string]*api.Secret{}
+
+	data := make(map[string]interface{})
+	data["mysecret"] = "123"
+
+	previousSecret := &api.Secret{
+		RequestID:     "",
+		LeaseID:       "",
+		LeaseDuration: 0,
+		Renewable:     false,
+		Data:          data,
+		Warnings:      nil,
+		Auth:          nil,
+		WrapInfo:      nil,
+	}
+	NewKV := map[string]*api.Secret{}
+	PreviousKV["theSecret"] = previousSecret
+	if (listsMatch(PreviousKV, NewKV)) {
+		t.Fatal("listsMatchDiff should have differences. ")
+	}
 
 }
