@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"fmt"
+	"github.com/hashicorp/vault/api"
 	log "github.com/sirupsen/logrus"
 	"io/fs"
 	"math/rand"
@@ -45,14 +46,14 @@ func sleep() {
 	log.WithFields(log.Fields{"sleepTime": sleepTime}).Debug("Sleep done.")
 }
 
-func SliceContainsString(slice []interface{}, val string) bool {
-	for _, item := range slice {
-		if item == val {
-			return true
-		}
+func KeyInDictionary(dict map[string]*api.Secret, key string) bool {
+	inDictionary := false
+	if _, ok := dict[key]; ok {
+		inDictionary = true
 	}
-	return false
+	return inDictionary
 }
+
 
 func stringSliceContainsString(slice []string, val string) bool {
 	for _, item := range slice {
