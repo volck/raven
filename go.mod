@@ -13,7 +13,7 @@ require (
 	github.com/opencontainers/runc v1.0.3 // indirect
 	github.com/sirupsen/logrus v1.8.1
 	github.com/tencentcloud/tencentcloud-sdk-go v3.0.171+incompatible // indirect
-	golang.org/x/crypto v0.0.0-20220208050332-20e1d8d225ab
+	golang.org/x/crypto v0.1.0
 	gopkg.in/yaml.v2 v2.4.0
 	k8s.io/api v0.22.2
 	k8s.io/apimachinery v0.22.2
