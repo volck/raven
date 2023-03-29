@@ -10,7 +10,7 @@ require (
 	github.com/hashicorp/vault/api v1.3.1
 	github.com/hashicorp/vault/sdk v0.3.1-0.20220721224749-00773967ab3a
 	github.com/opencontainers/image-spec v1.0.2 // indirect
-	github.com/opencontainers/runc v1.0.3 // indirect
+	github.com/opencontainers/runc v1.1.5 // indirect
 	github.com/sirupsen/logrus v1.8.1
 	github.com/tencentcloud/tencentcloud-sdk-go v3.0.171+incompatible // indirect
 	golang.org/x/crypto v0.0.0-20220208050332-20e1d8d225ab
