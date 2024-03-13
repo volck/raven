@@ -22,7 +22,7 @@ dockers:
       - "ghcr.io/volck/raven:latest"
       - "ghcr.io/volck/raven:{{.Version}}"
     dockerfile: Dockerfile
-    use_buildx: true
+    use: buildx
     skip_push: false
     build_flag_templates:
       - "--platform=linux/amd64"
