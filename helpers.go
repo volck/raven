@@ -6,7 +6,6 @@ import (
 	"github.com/hashicorp/vault/api"
 	log "github.com/sirupsen/logrus"
 	"io/fs"
-	"math/rand"
 	"path/filepath"
 	"strings"
 	"time"
@@ -34,15 +33,10 @@ func parseGitStatusFileName(path string) string {
 	return f
 }
 
-func sleep() {
-	rand.Seed(time.Now().UnixNano())
-	max := 30
-	min := 15
-	sleepTime := rand.Intn(max-min) + min
-
-	//now we sleep randomly
+func sleep(sleepTime int) {
 	log.WithFields(log.Fields{"sleepTime": sleepTime}).Debug("Going to sleep.")
 	time.Sleep(time.Duration(sleepTime) * time.Second)
+
 	log.WithFields(log.Fields{"sleepTime": sleepTime}).Debug("Sleep done.")
 }
 
@@ -54,7 +48,6 @@ func KeyInDictionary(dict map[string]*api.Secret, key string) bool {
 	return inDictionary
 }
 
-
 func stringSliceContainsString(slice []string, val string) bool {
 	for _, item := range slice {
 		if item == val {
@@ -63,4 +56,3 @@ func stringSliceContainsString(slice []string, val string) bool {
 	}
 	return false
 }
-

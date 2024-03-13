@@ -39,7 +39,8 @@ func init() {
 
 }
 
-/*/
+/*
+/
 
 isDocumentationKey parses documentationKeys list, returns true if key exists.
 */
@@ -132,6 +133,7 @@ func main() {
 	repoUrl := flag.String("repourl", "", "REPO url. e.g. https://uname:pwd@src_control/some/path/somerepo.git")
 	clonePath := flag.String("clonepath", "/tmp/clone", "Path in which to clone repo and used for base for appending keys.")
 	destEnv := flag.String("dest", "", "destination env in git repository to output SealedSecrets to.")
+	sleepTime := flag.Int("sleep", 360, "define how long Raven should sleep between each iteration")
 	flag.Parse()
 
 	visited := true
@@ -157,7 +159,6 @@ func main() {
 		if kubernetesMonitor == "true" || kubernetesRemove == "true" {
 			newConfig.Clientset = initk8sServiceAccount()
 		}
-
 
 		log.WithFields(log.Fields{"config": newConfig}).Debug("Setting newConfig variables. preparing to run. ")
 		client, err := client()
@@ -201,7 +202,7 @@ func main() {
 						gitPush(newConfig)
 						log.WithFields(log.Fields{"PickedRipeSecrets": PickedRipeSecrets}).Debug("PickedRipeSecrets list")
 						State = mySecretList
-						sleep()
+						sleep(*sleepTime)
 					}
 				}
 			}
