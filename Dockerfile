@@ -1,13 +1,22 @@
-FROM docker.io/alpine:latest 
+FROM golang:1.22
 
-ENV CERT_FILE=/mg/secret/ssc/tls.crt \
-    CLONE_PATH=/tmp/clone \
-    VAULT_TOKEN="" \
-    VAULT_KV="" \
-    REPO_URL=""\ 
-    SSL_CERT_FILE=/tmp/cert/ca.crt
-    
-COPY . /
+# Set destination for COPY
+WORKDIR /app
+
+# Download Go modules
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy the source code. Note the slash at the end, as explained in
+# https://docs.docker.com/reference/dockerfile/#copy
+COPY *.go ./
+
+# Build
+RUN CGO_ENABLED=0 GOOS=linux go build -o /raven
+
 COPY files/start /start
+RUN chmod +x /start
+
+# Run
 USER 1001
 ENTRYPOINT ["/start"]
