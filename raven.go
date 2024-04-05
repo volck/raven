@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -156,8 +157,17 @@ func main() {
 
 		kubernetesMonitor := os.Getenv("KUBERNETESMONITOR")
 		kubernetesRemove := os.Getenv("KUBERNETESREMOVE")
+		kubernetesDoRollout := os.Getenv("KUBERNETES_ROLLOUT")
+
 		if kubernetesMonitor == "true" || kubernetesRemove == "true" {
-			newConfig.Clientset = initk8sServiceAccount()
+			newConfig.Clientset = NewKubernetesClient()
+		}
+
+		if kubernetesDoRollout == "true" {
+			theLogger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+			newClient := NewKubernetesClient()
+			w := NewWatcher(theLogger, newClient, *destEnv)
+			w.MonitorNamespaceForSecretChange()
 		}
 
 		log.WithFields(log.Fields{"config": newConfig}).Debug("Setting newConfig variables. preparing to run. ")
