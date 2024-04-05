@@ -43,8 +43,3 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      -
-        name: Build Docker Image
-        run: |
-          docker build -t ghcr.io/${{ github.repository_owner }}/my-image:${{ github.ref }} .
-          docker push ghcr.io/${{ github.repository_owner }}/my-image:${{ github.ref }}
