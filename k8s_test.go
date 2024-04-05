@@ -4,9 +4,13 @@ import (
 	"context"
 	"fmt"
 	log "github.com/sirupsen/logrus"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	testclient "k8s.io/client-go/kubernetes/fake"
+	"log/slog"
+	"os"
 	"strings"
 	"testing"
 )
@@ -33,7 +37,6 @@ func TestCreatek8sSecretWithMissingDataField(t *testing.T) {
 	if err != nil {
 		log.WithFields(log.Fields{"error": err}).Error("Could not get list of secrets for kubernetes namespace")
 	}
-
 
 	singleSecret := getSingleKV(client, "kv", "secret")
 	k8sSecret := createK8sSecret("secret", config, singleSecret)
@@ -270,7 +273,7 @@ func TestCleanKubernetes(t *testing.T) {
 		fmt.Println(err)
 	}
 	newkvlst := newKV.Data["keys"].([]interface{})
-	persistVaultChanges(newkvlst,client, config )
+	persistVaultChanges(newkvlst, client, config)
 	picked := PickRipeSecrets(previouskvlst, mySecretList)
 	fmt.Println(picked, len(picked))
 
@@ -378,5 +381,170 @@ func TestMonitorForSecret_ShouldExpire(t *testing.T) {
 	generateTestSecrets(t, client, config, secretNameTwo)
 
 	initKubernetesSearch(secretName, config)
+
+}
+
+func TestWatcher_MonitorNamespaceForSecretChange(t *testing.T) {
+
+	cluster := createVaultTestCluster(t)
+	defer cluster.Cleanup()
+	client := cluster.Cores[0].Client
+	c := config{
+		vaultEndpoint: cluster.Cores[0].Client.Address(),
+		secretEngine:  "kv",
+		token:         client.Token(),
+		destEnv:       "kv",
+	}
+
+	theLogger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	newClient := testclient.NewSimpleClientset()
+
+	w := NewWatcher(theLogger, newClient, c.destEnv)
+	go w.MonitorNamespaceForSecretChange()
+
+	// Define the deployment
+	deploymentName := "test-deployment"
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      deploymentName,
+			Namespace: c.destEnv,
+		},
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": "test-app",
+				},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"app": "test-app",
+					},
+					Annotations: map[string]string{},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "test-container",
+							Image: "your-image",
+							Ports: []corev1.ContainerPort{
+								{
+									ContainerPort: 80,
+								},
+							},
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									Name:      "secret-volume",
+									MountPath: "/etc/secret-volume",
+									ReadOnly:  true,
+								},
+							},
+						},
+					},
+					Volumes: []corev1.Volume{
+						{
+							Name: "secret-volume",
+							VolumeSource: corev1.VolumeSource{
+								Secret: &corev1.SecretVolumeSource{
+									SecretName: "secret",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	statefulSetName := "test-statefulset"
+
+	statefulSet := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      statefulSetName,
+			Namespace: c.destEnv,
+		},
+		Spec: appsv1.StatefulSetSpec{
+			ServiceName: "test-service",
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": "test-app",
+				},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"app": "test-app",
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "test-container",
+							Image: "your-image",
+							Ports: []corev1.ContainerPort{
+								{
+									ContainerPort: 80,
+								},
+							},
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									Name:      "secret-volume",
+									MountPath: "/etc/secret-volume",
+									ReadOnly:  true,
+								},
+							},
+						},
+					},
+					Volumes: []corev1.Volume{
+						{
+							Name: "secret-volume",
+							VolumeSource: corev1.VolumeSource{
+								Secret: &corev1.SecretVolumeSource{
+									SecretName: "secret",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	_, err := newClient.AppsV1().StatefulSets(c.destEnv).Create(context.Background(), statefulSet, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("could not create statefulset: %v", err)
+	}
+	// Create the deployment
+	_, err = newClient.AppsV1().Deployments(c.destEnv).Create(context.TODO(), deployment, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("could not create deployment: %v", err)
+
+	}
+
+	// make testable secrets for cluster
+	secrets := map[string]interface{}{
+		"data":     map[string]interface{}{"secretKey": "secretValue"},
+		"metadata": map[string]interface{}{"version": 2},
+	}
+	_, err = client.Logical().Write("kv/data/secret", secrets)
+	if err != nil {
+		log.WithFields(log.Fields{"error": err}).Error("Could not get list of secrets for kubernetes namespace")
+	}
+
+	//w.MonitorNamespaceForSecretChange()
+	singleSecret := getSingleKV(client, "kv", "secret")
+	k8sSecret := createK8sSecret("secret", c, singleSecret)
+	if k8sSecret.Data == nil && k8sSecret.StringData == nil {
+		t.Fatal("k8sSecret nil, data not loaded")
+	}
+	w.Logger.Info("labels", slog.String("labels", k8sSecret.ObjectMeta.Labels["managedBy"]))
+	_, err = newClient.CoreV1().Secrets(c.destEnv).Create(context.Background(), &k8sSecret, metav1.CreateOptions{})
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	_, err = newClient.CoreV1().Secrets(c.destEnv).Update(context.Background(), &k8sSecret, metav1.UpdateOptions{})
+	if err != nil {
+		fmt.Println(err)
+	}
 
 }
