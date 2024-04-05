@@ -13,7 +13,6 @@ import (
 
 /*
 HarvestRipeSecrets() checks local files based on RipeSecrets returned from PickRipeSecrets() and marks them for deletion.
-
 */
 func HarvestRipeSecrets(RipeSecrets []string, config config) {
 	if len(RipeSecrets) > 0 {
@@ -34,12 +33,12 @@ func HarvestRipeSecrets(RipeSecrets []string, config config) {
 		}
 		kubernetesremove := os.Getenv("KUBERNETESREMOVE")
 		if kubernetesremove == "true" {
-			config.Clientset = initk8sServiceAccount()
+			config.Clientset = NewKubernetesClient()
 			kubernetesSecretList, err := kubernetesSecretList(config.Clientset, config.destEnv)
 			if err != nil {
 				log.WithFields(log.Fields{"err": err}).Error("harvestripesecret secretlist fetch failed")
 			}
-			config.Clientset = initk8sServiceAccount()
+			config.Clientset = NewKubernetesClient()
 			kubernetesRemove(RipeSecrets, kubernetesSecretList, config.Clientset, config.destEnv)
 			log.WithFields(log.Fields{}).Debug("HarvestRipeSecrets done")
 		}
@@ -54,8 +53,6 @@ func SerializeAndWriteToFile(SealedSecret *sealedSecretPkg.SealedSecret, fullPat
 		WriteErrorToTerminationLog(err.Error())
 	}
 
-
-
 	options := k8sJson.SerializerOptions{
 		Yaml:   true,
 		Pretty: true,
@@ -69,8 +66,6 @@ func SerializeAndWriteToFile(SealedSecret *sealedSecretPkg.SealedSecret, fullPat
 	}
 
 }
-
-
 
 /*
 ensurePathandreturnWritePath:
