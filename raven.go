@@ -127,14 +127,14 @@ var newConfig = config{
 }
 
 func main() {
-	token := flag.String("token", "", "token used for to grab secrets from Vault")
-	secretEngine := flag.String("se", "", "specifies secret engine to grab secrets from in Vault")
-	vaultEndpoint := flag.String("vaultendpoint", "", "URL to the Vault installation.")
-	pemFile := flag.String("cert", "", "used to create sealed secrets")
-	repoUrl := flag.String("repourl", "", "REPO url. e.g. https://uname:pwd@src_control/some/path/somerepo.git")
-	clonePath := flag.String("clonepath", "/tmp/clone", "Path in which to clone repo and used for base for appending keys.")
-	destEnv := flag.String("dest", "", "destination env in git repository to output SealedSecrets to.")
-	sleepTime := flag.Int("sleep", 360, "define how long Raven should sleep between each iteration")
+	token := flag.String("token", os.Getenv("VAULT_TOKEN"), "token used for to grab secrets from Vault")
+	secretEngine := flag.String("se", os.Getenv("SECRET_ENGINE"), "specifies secret engine to grab secrets from in Vault")
+	vaultEndpoint := flag.String("vaultendpoint", os.Getenv("VAULTENDPOINT"), "URL to the Vault installation.")
+	pemFile := flag.String("cert", os.Getenv("CERT_FILE"), "used to create sealed secrets")
+	repoUrl := flag.String("repourl", os.Getenv("REPO_URL"), "REPO url. e.g. https://uname:pwd@src_control/some/path/somerepo.git")
+	clonePath := flag.String("clonepath", os.Getenv("CLONE_PATH"), "Path in which to clone repo and used for base for appending keys.")
+	destEnv := flag.String("dest", os.Getenv("DEST_ENV"), "destination env in git repository to output SealedSecrets to.")
+	sleepTime := flag.Int("sleep", getIntEnv("SLEEP_TIME", 360), "define how long Raven should sleep between each iteration")
 	flag.Parse()
 
 	visited := true
@@ -167,7 +167,12 @@ func main() {
 			theLogger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 			newClient := NewKubernetesClient()
 			w := NewWatcher(theLogger, newClient, *destEnv)
-			w.MonitorNamespaceForSecretChange()
+			sufficientPermissions := w.CheckKubernetesServiceAccountPermissions()
+			if sufficientPermissions {
+				w.MonitorNamespaceForSecretChange()
+			} else {
+				w.Logger.Info("ServiceAccount does not have permissions to watch namespace, exiting go routine")
+			}
 		}
 
 		log.WithFields(log.Fields{"config": newConfig}).Debug("Setting newConfig variables. preparing to run. ")
