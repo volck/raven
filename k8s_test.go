@@ -15,62 +15,59 @@ import (
 	"testing"
 )
 
-func TestCreatek8sSecretWithMissingDataField(t *testing.T) {
-	t.Parallel()
-	cluster := createVaultTestCluster(t)
-	defer cluster.Cleanup()
-	client := cluster.Cores[0].Client
-	config := config{
-		vaultEndpoint: cluster.Cores[0].Client.Address(),
-		secretEngine:  "kv",
-		token:         client.Token(),
-		destEnv:       "kv",
-	}
-
-	// make testable secrets for cluster
-
-	secrets := map[string]interface{}{
-		"data":     nil,
-		"metadata": nil,
-	}
-	_, err := client.Logical().Write("kv/data/secret", secrets)
-	if err != nil {
-		log.WithFields(log.Fields{"error": err}).Error("Could not get list of secrets for kubernetes namespace")
-	}
-
-	singleSecret := getSingleKV(client, "kv", "secret")
-	k8sSecret := createK8sSecret("secret", config, singleSecret)
-	fmt.Println("k8sSecret created successfully without any fields", k8sSecret)
-}
-
 func TestCreatek8sSecret(t *testing.T) {
-	t.Parallel()
-	cluster := createVaultTestCluster(t)
-	defer cluster.Cleanup()
-	client := cluster.Cores[0].Client
-	config := config{
-		vaultEndpoint: cluster.Cores[0].Client.Address(),
-		secretEngine:  "kv",
-		token:         client.Token(),
-		destEnv:       "kv",
+	tests := []struct {
+		name     string
+		secrets  map[string]interface{}
+		wantData bool
+	}{
+		{
+			name:     "Test with missing data field",
+			secrets:  map[string]interface{}{"data": nil, "metadata": nil},
+			wantData: false,
+		},
+		{
+			name: "Test with valid data",
+			secrets: map[string]interface{}{
+				"data":     map[string]interface{}{"secretKey": "secretValue"},
+				"metadata": map[string]interface{}{"version": 2},
+			},
+			wantData: true,
+		},
 	}
 
-	// make testable secrets for cluster
-	secrets := map[string]interface{}{
-		"data":     map[string]interface{}{"secretKey": "secretValue"},
-		"metadata": map[string]interface{}{"version": 2},
-	}
-	_, err := client.Logical().Write("kv/data/secret", secrets)
-	if err != nil {
-		log.WithFields(log.Fields{"error": err}).Error("Could not get list of secrets for kubernetes namespace")
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cluster := createVaultTestCluster(t)
+			defer cluster.Cleanup()
+			client := cluster.Cores[0].Client
+			config := config{
+				vaultEndpoint: cluster.Cores[0].Client.Address(),
+				secretEngine:  "kv",
+				token:         client.Token(),
+				destEnv:       "kv",
+			}
 
-	singleSecret := getSingleKV(client, "kv", "secret")
-	k8sSecret := createK8sSecret("secret", config, singleSecret)
-	if k8sSecret.Data == nil && k8sSecret.StringData == nil {
-		t.Fatal("k8sSecret nil, data not loaded")
+			_, err := client.Logical().Write("kv/data/secret", tt.secrets)
+			if err != nil {
+				log.WithFields(log.Fields{"error": err}).Error("Could not get list of secrets for kubernetes namespace")
+			}
+			singleSecret := getSingleKV(client, "kv", "secret")
+			fmt.Println(singleSecret.Data["metadata"].(map[string]interface{})["custom_metadata"])
+			k8sSecret := createK8sSecret("secret", config, singleSecret)
+
+			fmt.Println(k8sSecret.Annotations)
+
+			if tt.wantData && (k8sSecret.Data == nil && k8sSecret.StringData == nil) {
+				t.Fatal("k8sSecret nil, data not loaded")
+			}
+
+			if !tt.wantData && (k8sSecret.Data != nil || k8sSecret.StringData != nil) {
+				t.Fatal("k8sSecret not nil, data loaded unexpectedly")
+			}
+		})
 	}
-	fmt.Println("k8sSecret", k8sSecret)
 }
 
 func TestInitKubernetesConfig(t *testing.T) {
@@ -547,4 +544,146 @@ func TestWatcher_MonitorNamespaceForSecretChange(t *testing.T) {
 		fmt.Println(err)
 	}
 
+}
+
+func TestCreateK8sSecretWithCustomMetadata(t *testing.T) {
+	tests := []struct {
+		name     string
+		secrets  map[string]interface{}
+		wantData bool
+	}{
+		{
+			name:     "Test with missing data field",
+			secrets:  map[string]interface{}{"data": nil, "metadata": nil},
+			wantData: false,
+		},
+		{
+			name: "Test with valid data",
+			secrets: map[string]interface{}{
+				"data":     map[string]interface{}{"secretKey": "secretValue"},
+				"metadata": map[string]interface{}{"version": 2, "custom_metadata": map[string]interface{}{"my_data": "very_custom"}},
+			},
+			wantData: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cluster := createVaultTestCluster(t)
+			defer cluster.Cleanup()
+			client := cluster.Cores[0].Client
+			config := config{
+				vaultEndpoint: cluster.Cores[0].Client.Address(),
+				secretEngine:  "kv",
+				token:         client.Token(),
+				destEnv:       "kv",
+			}
+
+			GenerateCustomMetadataSecret(t, client, config, "secret", nil)
+
+			singleSecret := getSingleKV(client, config.secretEngine, "secret")
+			fmt.Println(singleSecret.Data["metadata"].(map[string]interface{})["custom_metadata"])
+
+			k8sSecret := createK8sSecret("secret", config, singleSecret)
+
+			fmt.Println(k8sSecret)
+
+			if tt.wantData && (k8sSecret.Data == nil && k8sSecret.StringData == nil) {
+				t.Fatal("k8sSecret nil, data not loaded")
+			}
+
+			if !tt.wantData && (k8sSecret.Data != nil || k8sSecret.StringData != nil) {
+				t.Fatal("k8sSecret not nil, data loaded unexpectedly")
+			}
+		})
+	}
+}
+
+func TestApplyMetadata(t *testing.T) {
+	// Define the test cases
+
+	cluster := createVaultTestCluster(t)
+	defer cluster.Cleanup()
+	client := cluster.Cores[0].Client
+	config := config{
+		vaultEndpoint: cluster.Cores[0].Client.Address(),
+		secretEngine:  "kv",
+		token:         client.Token(),
+		destEnv:       "kv",
+	}
+
+	GenerateCustomMetadataSecret(t, client, config, "secret", nil)
+
+	singleSecret := getSingleKV(client, "kv", "secret")
+	fmt.Println(singleSecret.Data["metadata"].(map[string]interface{})["custom_metadata"])
+	k8sSecret := createK8sSecret("secret", config, singleSecret)
+	fmt.Println(k8sSecret.Annotations)
+
+}
+
+func Test_applyMetadata(t *testing.T) {
+	// Define the test cases
+	testCases := []struct {
+		name            string
+		secretName      string
+		customInputData map[string]interface{}
+		want            map[string]string
+	}{
+		{
+			name:       "Test with AWS ARN",
+			secretName: "custom_metadataSecret",
+			customInputData: map[string]interface{}{
+				"AWS_ARN_REF": "arn:aws:iam::123456789012:role/role-name",
+			},
+			want: map[string]string{
+				"AWS_ARN_REF": "arn:aws:iam::123456789012:role/role-name",
+			},
+		},
+		{
+			name:       "NO_SYNC option enabled",
+			secretName: "custom_metadataSecret",
+			customInputData: map[string]interface{}{
+				"NO_SYNC": "true",
+			},
+			want: map[string]string{
+				"NO_SYNC": "true",
+			},
+		},
+		// Add more test cases as needed
+	}
+
+	// Run the test cases
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cluster := createVaultTestCluster(t)
+			defer cluster.Cleanup()
+			client := cluster.Cores[0].Client
+			config := config{
+				vaultEndpoint: cluster.Cores[0].Client.Address(),
+				secretEngine:  "kv",
+				token:         client.Token(),
+				destEnv:       "kv",
+				pemFile:       "cert.pem",
+			}
+
+			dataFields := GenerateCustomMetadataSecret(t, client, config, tc.secretName, tc.customInputData)
+			Annotations := applyAnnotations(dataFields, config)
+			got := applyMetadata(dataFields, Annotations)
+			if tc.name == "Test with AWS ARN" {
+				if got["AWS_ARN_REF"] != tc.want["AWS_ARN_REF"] {
+					t.Fatal()
+				} else {
+					fmt.Printf("Test passed, got %v", got["AWS_ARN_REF"])
+				}
+			} else if tc.name == "NO_SYNC option enabled" {
+				if got["NO_SYNC"] != tc.want["NO_SYNC"] {
+					t.Fatal()
+				} else {
+					fmt.Printf("Test passed, got NO_SYNC %v", got["NO_SYNC"])
+				}
+			}
+		})
+	}
 }
