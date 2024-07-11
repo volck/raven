@@ -32,14 +32,14 @@ func loadSSHKey() (sshKey []byte) {
 	sshKeyPath := os.Getenv("SSHKEYPATH")
 
 	if sshKeyPath == "" {
-		sshKey, err := ioutil.ReadFile("/secret/sshKey")
+		sshKey, err := os.ReadFile("/secret/sshKey")
 		if err != nil {
 			log.WithFields(log.Fields{"err": err}).Fatal("setSSHConfig: unable to read private key ")
 		}
 		return sshKey
 
 	} else {
-		sshKey, err := ioutil.ReadFile(sshKeyPath)
+		sshKey, err := os.ReadFile(sshKeyPath)
 		if err != nil {
 			log.WithFields(log.Fields{"err": err}).Fatal("setSSHConfig: unable to read private key ")
 		}
