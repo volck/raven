@@ -122,6 +122,25 @@ func applyMetadata(dataFields *api.Secret, Annotations map[string]string) map[st
 		}
 
 	}
+	for k, v := range dataFields.Data["metadata"].(map[string]interface{})["custom_metadata"].(map[string]interface{}) {
+		// we handle descriptions for KVs here, in order to show which secrets are handled by which SSG.
+		switch v.(type) {
+		case float64:
+			float64value := reflect.ValueOf(v)
+			float64convert := strconv.FormatFloat(float64value.Float(), 'f', -1, 64)
+			Annotations[k] = float64convert
+			log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["metadata"]}).Debug("createK8sSecret: dataFields.Data[metadata][custom_metadata] case match float64 ")
+		case string:
+			Annotations[k] = v.(string)
+			log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["metadata"]}).Debug("createK8sSecret: dataFields.Data[metadata][custom_metadata] case match string ")
+		case bool:
+			booleanvalue := reflect.ValueOf(v)
+			boolconvert := strconv.FormatBool(booleanvalue.Bool())
+			Annotations[k] = boolconvert
+			log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["metadata"]}).Debug("createK8sSecret: dataFields.Data[metadata][custom_metadata] case match bool ")
+		}
+	}
+
 	return Annotations
 
 }
@@ -411,4 +430,25 @@ func (app *Watcher) updateStatefulSetAnnotations(statefulset *appsv1.StatefulSet
 		statefulset.Spec.Template.ObjectMeta.Annotations["norsk-tipping.no/lastUUIDTriggeredRestart"] = string(secret.ObjectMeta.UID)
 	}
 	return statefulset
+}
+
+/*
+scaffolding for k8s,
+createK8sSecret generates k8s secrets based on inputs:
+- name: name of secret
+- Namespace: k8s namespace
+- datafield: data for secret
+returns v1.Secret for consumption by SealedSecret
+*/
+func createK8sSecret(name string, config config, dataFields *api.Secret) (secret v1.Secret) {
+	Annotations := applyAnnotations(dataFields, config)
+	data, stringdata := applyDatafieldsTok8sSecret(dataFields, Annotations, name)
+	Annotations = applyMetadata(dataFields, Annotations)
+	ravenLabels := applyRavenLabels()
+
+	SecretContent := SecretContents{stringdata: stringdata, data: data, Annotations: Annotations, name: name, Labels: ravenLabels}
+	secret = NewSecretWithContents(SecretContent, config)
+	log.WithFields(log.Fields{"typeMeta": secret.TypeMeta, "objectMeta": secret.ObjectMeta, "data": data, "stringData": stringdata, "secret": secret}).Debug("createK8sSecret: made k8s secret object")
+	return
+
 }
