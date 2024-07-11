@@ -9,11 +9,13 @@ import (
 	. "github.com/hashicorp/vault-plugin-secrets-kv"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
+	"reflect"
 	"testing"
 
 	"github.com/hashicorp/vault/api"
 	vaulthttp "github.com/hashicorp/vault/http"
 	"github.com/hashicorp/vault/sdk/logical"
+
 	hashivault "github.com/hashicorp/vault/vault"
 )
 
@@ -472,4 +474,204 @@ func createVaultTestCluster(t *testing.T) *hashivault.TestCluster {
 	}
 
 	return cluster
+}
+
+func GenerateTestSecretsWithCustomMetadata(t *testing.T, customMetadata map[string]interface{}) *api.Secret {
+
+	secretData := map[string]interface{}{
+		"data":     map[string]interface{}{"key": "value", "many": "keys", "some": "values"},
+		"metadata": customMetadata,
+	}
+	// Create a new Secret object
+	secret := &api.Secret{
+		Data: secretData,
+	}
+
+	return secret
+}
+
+func TestGetCustomMetadataFromSecret(t *testing.T) {
+	tests := []struct {
+		name    string
+		secret  *api.Secret
+		want    map[string]interface{}
+		wantErr bool
+	}{
+		{
+			name:    "secretNil",
+			secret:  nil,
+			want:    nil,
+			wantErr: true,
+		},
+		{
+			name:    "SecretWithEmptyMetadata",
+			secret:  GenerateTestSecretsWithCustomMetadata(t, map[string]interface{}{}),
+			want:    nil,
+			wantErr: true,
+		},
+		{
+			name: "SecretWithNestedMetadata",
+			secret: GenerateTestSecretsWithCustomMetadata(t, map[string]interface{}{
+				"custom_metadata": map[string]interface{}{
+					"my_data":     "very_custom",
+					"AWS_ARN_REF": "arn:partition:service:region:account-id:resource-id,arn:partition:service:region:account-id:resource-type/resource-id,arn:partition:service:region:account-id:resource-type:resource-id",
+				},
+			}),
+			want: map[string]interface{}{
+				"my_data":     "very_custom",
+				"AWS_ARN_REF": "arn:partition:service:region:account-id:resource-id,arn:partition:service:region:account-id:resource-type/resource-id,arn:partition:service:region:account-id:resource-type:resource-id",
+			},
+			wantErr: false,
+		},
+		{
+			name: "SecretWithNonStringMetadata",
+			secret: GenerateTestSecretsWithCustomMetadata(t, map[string]interface{}{
+				"custom_metadata": map[string]interface{}{
+					"my_data": "very_custom",
+					"test":    1234,
+				},
+			}),
+			want: map[string]interface{}{
+				"my_data": "very_custom",
+				"test":    1234,
+			},
+			wantErr: false,
+		},
+		{
+			name: "SecretWithNullMetadata",
+			secret: GenerateTestSecretsWithCustomMetadata(t, map[string]interface{}{
+				"custom_metadata": map[string]interface{}{
+					"my_data": nil,
+					"test":    1234,
+				},
+			}),
+			want: map[string]interface{}{
+				"my_data": nil,
+				"test":    1234,
+			},
+			wantErr: false,
+		},
+		{
+			name: "SecretWithNtSpecific",
+			secret: GenerateTestSecretsWithCustomMetadata(t, map[string]interface{}{
+				"custom_metadata": map[string]interface{}{
+					"AWS_ARN_REF": "arn:aws:secretsmanager:eu-north-1:533267334331",
+				},
+			}),
+			want: map[string]interface{}{
+				"AWS_ARN_REF": "arn:aws:secretsmanager:eu-north-1:533267334331",
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, _ := GetCustomMetadataFromSecret(tt.secret)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("GetCustomMetadataFromSecret() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func GenerateCustomMetadataSecret(t *testing.T, client *api.Client, config config, secretName string, customInputData map[string]interface{}) *api.Secret {
+
+	custom_metadata := map[string]interface{}{
+		"custom_metadata": customInputData,
+	}
+
+	if customInputData != nil {
+		custom_metadata = customInputData
+	}
+
+	secretData := map[string]interface{}{
+		"data": map[string]interface{}{
+			"secretKey": "secretValue2",
+		},
+		"custom_metadata": custom_metadata,
+	}
+
+	writePath := fmt.Sprintf("%s/metadata/%s", config.secretEngine, secretName)
+	_, err := client.Logical().Write(writePath, secretData)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeDataPath := fmt.Sprintf("%s/data/%s", config.secretEngine, secretName)
+	_, err = client.Logical().Write(writeDataPath, secretData)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	secret, err := client.Logical().Read(writeDataPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return secret
+
+}
+
+func TestGetCustomMetadataFromVaultInstance(t *testing.T) {
+
+	cluster := createVaultTestCluster(t)
+	defer cluster.Cleanup()
+	client := cluster.Cores[0].Client
+	config := config{
+		vaultEndpoint: cluster.Cores[0].Client.Address(),
+		secretEngine:  "kv",
+		token:         client.Token(),
+		destEnv:       "kv",
+		pemFile:       "cert.pem",
+	}
+
+	GenerateCustomMetadataSecret(t, client, config, "custom_metadataSecret", nil)
+
+}
+
+func TestParseARN(t *testing.T) {
+	tests := []struct {
+		name    string
+		arn     string
+		secret  string
+		want    string
+		wantErr bool
+	}{
+		{
+			name:    "Full ARN",
+			arn:     "arn:aws:secretsmanager:eu-north-1:533267334331:secret:qa01/test/demo-qHkXhm",
+			secret:  "qa01/test/demo-qHkXhm",
+			want:    "arn:aws:secretsmanager:eu-north-1:533267334331:secret:qa01/test/demo-qHkXhm",
+			wantErr: false,
+		},
+		{
+			name:    "Region and account number",
+			arn:     "eu-north-1:533267334331",
+			secret:  "someSecret",
+			want:    "arn:aws:secretsmanager:eu-north-1:533267334331:secret:secretEngine/someSecret",
+			wantErr: false,
+		},
+		{
+			name:    "Invalid ARN",
+			arn:     "invalid:arn",
+			secret:  "",
+			want:    "",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			theConfig := config{secretEngine: "secretEngine"}
+			got, err := ParseARN(tt.arn, theConfig, tt.secret)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseARN() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("ParseARN() got = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }
