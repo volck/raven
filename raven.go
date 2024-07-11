@@ -10,8 +10,6 @@ import (
 	"github.com/hashicorp/vault/api"
 
 	log "github.com/sirupsen/logrus"
-	"k8s.io/api/core/v1"
-	"strings"
 )
 
 func init() {
@@ -37,81 +35,6 @@ func init() {
 		log.Info("No LOGLEVEL specified. Defaulting to Info")
 
 	}
-
-}
-
-/*
-/
-
-isDocumentationKey parses documentationKeys list, returns true if key exists.
-*/
-func isDocumentationKey(DocumentationKeys []string, key string) bool {
-	for _, DocumentationKey := range DocumentationKeys {
-		if DocumentationKey == key {
-			log.WithFields(log.Fields{"key": key, "DocumentationKeys": DocumentationKeys}).Debug("IsdocumentationKey found key")
-			return true
-		}
-	}
-	return false
-}
-
-/*
-initAdditionalKeys looks for DOCUMENTATION_KEYS in order to enrich secret object with annotation down the line.
-*/
-
-func initAdditionalKeys() (DocumentationKeys []string) {
-	keys := os.Getenv("DOCUMENTATION_KEYS")
-	DocumentationKeys = strings.Split(keys, ",")
-
-	if !isDocumentationKey(DocumentationKeys, "raven/description") {
-		DocumentationKeys = append(DocumentationKeys, "raven/description")
-		log.WithFields(log.Fields{"DocumentationKeys": DocumentationKeys}).Info("No documentation_KEYS found, setting raven/description")
-
-	}
-
-	return
-}
-
-/*
-   We assume program crashed and we need to tell Kubernetes this:
-   https://kubernetes.io/docs/tasks/debug-application-cluster/determine-reason-pod-failure/
-*/
-
-func WriteErrorToTerminationLog(errormsg string) {
-	file, err := os.Create("/dev/termination-log")
-	if err != nil {
-		log.WithFields(log.Fields{"error": err.Error()}).Fatal("WriteErrorToTerminationLog failed")
-
-	}
-	defer file.Close()
-
-	_, err = file.WriteString(errormsg)
-	if err != nil {
-		log.WithFields(log.Fields{"error": err.Error()}).Fatal("writeString errormsg failed")
-
-	}
-	os.Exit(1)
-}
-
-/*
-scaffolding for k8s,
-createK8sSecret generates k8s secrets based on inputs:
-- name: name of secret
-- Namespace: k8s namespace
-- datafield: data for secret
-returns v1.Secret for consumption by SealedSecret
-*/
-
-func createK8sSecret(name string, config config, dataFields *api.Secret) (secret v1.Secret) {
-	Annotations := applyAnnotations(dataFields, config)
-	data, stringdata := applyDatafieldsTok8sSecret(dataFields, Annotations, name)
-	Annotations = applyMetadata(dataFields, Annotations)
-	ravenLabels := applyRavenLabels()
-
-	SecretContent := SecretContents{stringdata: stringdata, data: data, Annotations: Annotations, name: name, Labels: ravenLabels}
-	secret = NewSecretWithContents(SecretContent, config)
-	log.WithFields(log.Fields{"typeMeta": secret.TypeMeta, "objectMeta": secret.ObjectMeta, "data": data, "stringData": stringdata, "secret": secret}).Debug("createK8sSecret: made k8s secret object")
-	return
 
 }
 
@@ -211,7 +134,7 @@ func main() {
 						mySecretList = map[string]*api.Secret{}
 						secretList := list.Data["keys"].([]interface{})
 						persistVaultChanges(secretList, client, newConfig)
-						//..and push new files if there were any. If there are any ripe secrets, delete.,
+						//..and push new files if there were any. If there are any ripe secrets, delete.
 						PickedRipeSecrets := PickRipeSecrets(State, mySecretList)
 						HarvestRipeSecrets(PickedRipeSecrets, newConfig)
 						gitPush(newConfig)

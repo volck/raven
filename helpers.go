@@ -66,3 +66,51 @@ func getIntEnv(key string, defaultValue int) int {
 	}
 	return defaultValue
 }
+
+/*
+isDocumentationKey parses documentationKeys list, returns true if key exists.
+*/
+func isDocumentationKey(DocumentationKeys []string, key string) bool {
+	for _, DocumentationKey := range DocumentationKeys {
+		if DocumentationKey == key {
+			log.WithFields(log.Fields{"key": key, "DocumentationKeys": DocumentationKeys}).Debug("IsdocumentationKey found key")
+			return true
+		}
+	}
+	return false
+}
+
+/*
+initAdditionalKeys looks for DOCUMENTATION_KEYS in order to enrich secret object with annotation down the line.
+*/
+func initAdditionalKeys() (DocumentationKeys []string) {
+	keys := os.Getenv("DOCUMENTATION_KEYS")
+	DocumentationKeys = strings.Split(keys, ",")
+
+	if !isDocumentationKey(DocumentationKeys, "raven/description") {
+		DocumentationKeys = append(DocumentationKeys, "raven/description")
+		log.WithFields(log.Fields{"DocumentationKeys": DocumentationKeys}).Info("No documentation_KEYS found, setting raven/description")
+
+	}
+
+	return
+}
+
+/*
+WriteErrorToTerminationLog writes error message to /dev/termination-log as described in https:kubernetes.io/docs/tasks/debug-application-cluster/determine-reason-pod-failure/
+*/
+func WriteErrorToTerminationLog(errormsg string) {
+	file, err := os.Create("/dev/termination-log")
+	if err != nil {
+		log.WithFields(log.Fields{"error": err.Error()}).Fatal("WriteErrorToTerminationLog failed")
+
+	}
+	defer file.Close()
+
+	_, err = file.WriteString(errormsg)
+	if err != nil {
+		log.WithFields(log.Fields{"error": err.Error()}).Fatal("writeString errormsg failed")
+
+	}
+	os.Exit(1)
+}
