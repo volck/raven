@@ -4,7 +4,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
-	"io/ioutil"
+	"os"
 
 	sealedSecretPkg "github.com/bitnami-labs/sealed-secrets/pkg/apis/sealed-secrets/v1alpha1"
 	"github.com/hashicorp/vault/api"
@@ -25,7 +25,7 @@ func readSealedSecretAndCompareWithVaultStruct(secret string, kv *api.Secret, fi
 	VaultTimeStamp := kv.Data["metadata"].(map[string]interface{})["created_time"]
 
 	//grab SealedSecret file
-	data, err := ioutil.ReadFile(filepointer)
+	data, err := os.ReadFile(filepointer)
 	if err != nil {
 		log.WithFields(log.Fields{"filepointer": filepointer, "error": err.Error()}).Error("readSealedSecretAndCompareWithVaultStruct.ioutil.ReadFile")
 		WriteErrorToTerminationLog(err.Error())
@@ -62,14 +62,13 @@ func readSealedSecretAndCompareWithVaultStruct(secret string, kv *api.Secret, fi
 createSealedSecret takes two arguments:
 publicKeyPath: path to PEM file.
 k8ssecret: kubernetes secret generated from createK8sSecret when iterating list of secrets.
-
 */
 func createSealedSecret(publickeyPath string, k8ssecret *v1.Secret) (sealedSecret *sealedSecretPkg.SealedSecret) {
-	read, err := ioutil.ReadFile(publickeyPath)
+	read, err := os.ReadFile(publickeyPath)
 	if err != nil {
 		log.WithFields(log.Fields{"publickeyPath": publickeyPath, "error": err}).Fatal("createSealedSecret.ioutil.ReadFile: Cannot read publickeyPath")
 	}
-	block, _ := pem.Decode([]byte(read))
+	block, _ := pem.Decode(read)
 	if block == nil {
 		log.WithFields(log.Fields{
 			"pemDecode": publickeyPath,
@@ -124,7 +123,7 @@ func listsMatch(PreviousKV map[string]*api.Secret, NewKV map[string]*api.Secret)
 
 func findRipeSecrets(PreviousKV map[string]*api.Secret, NewKV map[string]*api.Secret) (RipeSecrets []string) {
 	for k, _ := range PreviousKV {
-//		containsString := SliceContainsString(NewKV.Data["keys"].([]interface{}), v.(string))
+		//		containsString := SliceContainsString(NewKV.Data["keys"].([]interface{}), v.(string))
 		containsString := KeyInDictionary(NewKV, k)
 		if !containsString {
 			log.WithFields(log.Fields{"PreviousKV": PreviousKV, "action": "delete"}).Debug("PickRipeSecrets: We have found a ripe secret. adding it to list of ripesecrets now.")
