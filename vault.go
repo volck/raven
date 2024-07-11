@@ -71,7 +71,7 @@ func removeFromWorkingtree(RipeSecrets []string, worktree *git.Worktree, newConf
 	}
 }
 
-//env string, token string
+// env string, token string
 func getAllKVs(client *api.Client, config config) (Secret *api.Secret, err error) {
 	url := config.secretEngine + "/metadata"
 
@@ -150,4 +150,25 @@ func validToken(client *api.Client) (valid bool) {
 	valid = true
 	return valid
 
+}
+
+func GetCustomMetadataFromSecret(secret *api.Secret) (CustomMetadata map[string]interface{}, found bool) {
+
+	if secret == nil {
+		fmt.Println("secret is nil")
+		return nil, false
+	}
+
+	metadata, ok := secret.Data["metadata"].(map[string]interface{})
+	if !ok {
+		fmt.Println("metadata is nil. returning")
+		return nil, false
+	}
+
+	customMetadata, ok := metadata["custom_metadata"].(map[string]interface{})
+	if !ok {
+		fmt.Println("customMetadata is nil. returning")
+		return nil, false
+	}
+	return customMetadata, true
 }
