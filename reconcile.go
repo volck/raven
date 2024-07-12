@@ -102,6 +102,10 @@ func persistVaultChanges(secretList []interface{}, client *api.Client, config co
 				k8sSecret := createK8sSecret(path, config, val)
 				SealedSecret := createSealedSecret(config.pemFile, &k8sSecret)
 
+				err := WriteAWSKeyValueSecret(val, path)
+				if err != nil {
+					log.WithFields(log.Fields{"error": err, "secret": val}).Debug("persistVaultChanges.WriteAWSKeyValueSecret")
+				}
 				newBase := ensurePathandreturnWritePath(newConfig, SealedSecret.Name)
 				if _, err := os.Stat(newBase); os.IsNotExist(err) {
 					log.WithFields(log.Fields{"secret": SealedSecret.Name, "action": "request.operation.create"}).Info("Creating Sealed Secret")

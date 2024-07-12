@@ -635,41 +635,40 @@ func TestParseARN(t *testing.T) {
 		name    string
 		arn     string
 		secret  string
-		want    string
+		want    *ARN
 		wantErr bool
 	}{
 		{
 			name:    "Full ARN",
 			arn:     "arn:aws:secretsmanager:eu-north-1:533267334331:secret:qa01/test/demo-qHkXhm",
 			secret:  "qa01/test/demo-qHkXhm",
-			want:    "arn:aws:secretsmanager:eu-north-1:533267334331:secret:qa01/test/demo-qHkXhm",
+			want:    &ARN{Partition: "arn:aws", Service: "secretsmanager", Region: "eu-north-1", AccountID: "533267334331", Resource: "secret:qa01/test/demo-qHkXhm"},
 			wantErr: false,
 		},
 		{
 			name:    "Region and account number",
 			arn:     "eu-north-1:533267334331",
 			secret:  "someSecret",
-			want:    "arn:aws:secretsmanager:eu-north-1:533267334331:secret:secretEngine/someSecret",
+			want:    &ARN{Partition: "arn:aws", Service: "secretsmanager", Region: "eu-north-1", AccountID: "533267334331", Resource: "secretEngine/someSecret"},
 			wantErr: false,
 		},
 		{
 			name:    "Invalid ARN",
 			arn:     "invalid:arn",
 			secret:  "",
-			want:    "",
+			want:    nil,
 			wantErr: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			theConfig := config{secretEngine: "secretEngine"}
-			got, err := ParseARN(tt.arn, theConfig, tt.secret)
+			got, err := ParseARN(tt.arn, "secretEngine", tt.secret)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ParseARN() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			if got != tt.want {
+			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("ParseARN() got = %v, want %v", got, tt.want)
 			}
 		})

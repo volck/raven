@@ -167,7 +167,6 @@ func GetCustomMetadataFromSecret(secret *api.Secret) (CustomMetadata map[string]
 
 	customMetadata, ok := metadata["custom_metadata"].(map[string]interface{})
 	if !ok {
-		fmt.Println("customMetadata is nil. returning")
 		return nil, false
 	}
 	return customMetadata, true

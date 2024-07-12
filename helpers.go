@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"github.com/hashicorp/vault/api"
 	log "github.com/sirupsen/logrus"
+	"github.com/spf13/pflag"
+	"github.com/spf13/viper"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -113,4 +115,11 @@ func WriteErrorToTerminationLog(errormsg string) {
 
 	}
 	os.Exit(1)
+}
+
+func bindFlagAndCheckError(p *viper.Viper, flag *pflag.Flag, flagName string) {
+	err := p.BindPFlag(flagName, flag)
+	if err != nil {
+		log.Fatalf("Failed to bind flag %s: %v", flagName, err)
+	}
 }

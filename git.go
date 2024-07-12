@@ -34,14 +34,15 @@ func loadSSHKey() (sshKey []byte) {
 	if sshKeyPath == "" {
 		sshKey, err := os.ReadFile("/secret/sshKey")
 		if err != nil {
-			log.WithFields(log.Fields{"err": err}).Fatal("setSSHConfig: unable to read private key ")
+			log.WithFields(log.Fields{"err": err}).Fatal("setSSHConfig: unable to read private key")
 		}
 		return sshKey
 
 	} else {
 		sshKey, err := os.ReadFile(sshKeyPath)
+		fmt.Println()
 		if err != nil {
-			log.WithFields(log.Fields{"err": err}).Fatal("setSSHConfig: unable to read private key ")
+			log.WithFields(log.Fields{"err": err}).Fatal("setSSHConfig: unable to read private key")
 		}
 		return sshKey
 

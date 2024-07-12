@@ -653,7 +653,7 @@ func Test_applyMetadata(t *testing.T) {
 		// Add more test cases as needed
 	}
 
-	// Run the test cases
+	// startRaven the test cases
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

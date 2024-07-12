@@ -3,6 +3,8 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -12,15 +14,57 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+var cfgFile string
+var newConfig config
+
+var rootCmd = &cobra.Command{
+	Use:   "raven",
+	Short: "Raven is a tool for managing secrets",
+	Long:  `Raven is a CLI tool for managing secrets in Vault and synchronizing them across different environments.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		cfg := initializeConfig()
+		startRaven(cfg)
+	},
+}
+
 func init() {
-	// Log as JSON instead of the default ASCII formatter.
+	cobra.OnInitialize(initConfig)
 
 	log.SetFormatter(&log.JSONFormatter{})
-
-	// Output to stdout instead of the default stderr
-	// Can be any io.Writer, see below for File example
 	log.SetOutput(os.Stdout)
 
+	rootCmd.Flags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.raven.yaml)")
+
+	rootCmd.Flags().String("token", "", "token used for to grab secrets from Vault")
+	rootCmd.Flags().String("se", "", "specifies secret engine to grab secrets from in Vault")
+	rootCmd.Flags().String("vaultendpoint", "", "URL to the Vault installation.")
+	rootCmd.Flags().String("cert", "", "used to create sealed secrets")
+	rootCmd.Flags().String("repourl", "", "REPO url.")
+	rootCmd.Flags().String("clonepath", "", "Path in which to clone repo and used for base for appending keys.")
+	rootCmd.Flags().String("dest", "", "destination env in git repository to output SealedSecrets to.")
+	rootCmd.Flags().String("loglevel", "INFO", "loglevel")
+	rootCmd.Flags().Int("sleep", 360, "define how long Raven should sleep between each iteration")
+
+	// setting required flags
+	//rootCmd.MarkFlagRequired("token")
+	//rootCmd.MarkFlagRequired("se")
+	//rootCmd.MarkFlagRequired("vaultendpoint")
+	//rootCmd.MarkFlagRequired("cert")
+	//rootCmd.MarkFlagRequired("repourl")
+	//rootCmd.MarkFlagRequired("clonepath")
+	//rootCmd.MarkFlagRequired("dest")
+
+	viper.BindPFlag("token", rootCmd.Flags().Lookup("token"))
+	viper.BindPFlag("secretEngine", rootCmd.Flags().Lookup("se"))
+	viper.BindPFlag("vaultEndpoint", rootCmd.Flags().Lookup("vaultendpoint"))
+	viper.BindPFlag("pemFile", rootCmd.Flags().Lookup("cert"))
+	viper.BindPFlag("repoUrl", rootCmd.Flags().Lookup("repourl"))
+	viper.BindPFlag("clonePath", rootCmd.Flags().Lookup("clonepath"))
+	viper.BindPFlag("loglevel", rootCmd.Flags().Lookup("clonepath"))
+	viper.BindPFlag("destEnv", rootCmd.Flags().Lookup("dest"))
+	viper.BindPFlag("sleepTime", rootCmd.Flags().Lookup("sleep"))
+
+	viper.AutomaticEnv()
 	loglevel := os.Getenv("LOGLEVEL")
 
 	switch {
@@ -33,23 +77,26 @@ func init() {
 	default:
 		log.SetLevel(log.InfoLevel)
 		log.Info("No LOGLEVEL specified. Defaulting to Info")
+	}
+}
 
+func initConfig() {
+	if cfgFile != "" {
+		viper.SetConfigFile(cfgFile)
+	} else {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			fmt.Println(err)
+		}
+		viper.AddConfigPath(home)
+		viper.SetConfigType("yaml")
+		viper.SetConfigName(".raven")
 	}
 
+	viper.ReadInConfig()
 }
 
-var newConfig = config{
-	vaultEndpoint:     "",
-	secretEngine:      "",
-	token:             "",
-	destEnv:           "",
-	pemFile:           "",
-	clonePath:         "",
-	repoUrl:           "",
-	DocumentationKeys: initAdditionalKeys(),
-}
-
-func main() {
+func initializeConfig() *config {
 	token := flag.String("token", os.Getenv("VAULT_TOKEN"), "token used for to grab secrets from Vault")
 	secretEngine := flag.String("se", os.Getenv("SECRET_ENGINE"), "specifies secret engine to grab secrets from in Vault")
 	vaultEndpoint := flag.String("vaultendpoint", os.Getenv("VAULTENDPOINT"), "URL to the Vault installation.")
@@ -77,13 +124,18 @@ func main() {
 		newConfig.clonePath = *clonePath
 		newConfig.repoUrl = *repoUrl
 		newConfig.DocumentationKeys = initAdditionalKeys() // we make sure that if the env here is set we can allow multiple descriptional fields in annotations.
-
+		newConfig.sleepTime = *sleepTime
 		kubernetesMonitor := os.Getenv("KUBERNETESMONITOR")
 		kubernetesRemove := os.Getenv("KUBERNETESREMOVE")
 		kubernetesDoRollout := os.Getenv("KUBERNETES_ROLLOUT")
+		awsWriteback := os.Getenv("AWS_WRITEBACK")
 
 		if kubernetesMonitor == "true" || kubernetesRemove == "true" {
 			newConfig.Clientset = NewKubernetesClient()
+		}
+		if awsWriteback == "true" {
+			newConfig.awsAccessKeyId = os.Getenv("AWS_ACCESS_KEY_ID")
+			newConfig.awsSecretAccessKey = os.Getenv("AWS_SECRET_ACCESS_KEY")
 		}
 
 		if kubernetesDoRollout == "true" {
@@ -97,7 +149,19 @@ func main() {
 				w.Logger.Info("ServiceAccount does not have permissions to watch namespace, exiting go routine")
 			}
 		}
+		return &newConfig
+	}
+	return nil
+}
 
+func main() {
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+}
+func startRaven(RavenCfg *config) {
+	if RavenCfg != nil {
 		log.WithFields(log.Fields{"config": newConfig}).Debug("Setting newConfig variables. preparing to run. ")
 		client, err := client()
 		if err != nil {
@@ -108,8 +172,8 @@ func main() {
 		if validToken(client) {
 			// start webserver
 			go handleRequests(newConfig)
-			//ensure paths for first time.
-			newpath := filepath.Join(*clonePath, *secretEngine)
+			// ensure paths for first time.
+			newpath := filepath.Join(RavenCfg.clonePath, RavenCfg.secretEngine)
 			err := os.MkdirAll(newpath, os.ModePerm)
 			if err != nil {
 				log.WithFields(log.Fields{"NewPath": newpath}).Error("os.Mkdir failed when trying to ensure paths for first time")
@@ -134,18 +198,18 @@ func main() {
 						mySecretList = map[string]*api.Secret{}
 						secretList := list.Data["keys"].([]interface{})
 						persistVaultChanges(secretList, client, newConfig)
-						//..and push new files if there were any. If there are any ripe secrets, delete.
+						// ..and push new files if there were any. If there are any ripe secrets, delete.
 						PickedRipeSecrets := PickRipeSecrets(State, mySecretList)
 						HarvestRipeSecrets(PickedRipeSecrets, newConfig)
 						gitPush(newConfig)
 						log.WithFields(log.Fields{"PickedRipeSecrets": PickedRipeSecrets}).Debug("PickedRipeSecrets list")
 						State = mySecretList
-						sleep(*sleepTime)
+						sleep(RavenCfg.sleepTime)
 					}
 				}
 			}
 		} else {
-			log.WithFields(log.Fields{"token": token}).Warn("Token is invalid, need to update. ")
+			log.WithFields(log.Fields{"token": RavenCfg.token}).Warn("Token is invalid, need to update. ")
 			WriteErrorToTerminationLog("[*] token is invalid, someone needs to update this![*]")
 		}
 	}

@@ -6,15 +6,19 @@ import (
 )
 
 type config struct {
-	vaultEndpoint     string
-	secretEngine      string
-	token             string
-	destEnv           string
-	pemFile           string
-	clonePath         string
-	repoUrl           string
-	DocumentationKeys []string
-	Clientset         kubernetes.Interface
+	vaultEndpoint      string
+	secretEngine       string
+	token              string
+	destEnv            string
+	pemFile            string
+	clonePath          string
+	repoUrl            string
+	DocumentationKeys  []string
+	Clientset          kubernetes.Interface
+	awsRegion          string
+	awsAccessKeyId     string
+	awsSecretAccessKey string
+	sleepTime          int
 }
 
 var secretNameLog []string

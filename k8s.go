@@ -122,22 +122,26 @@ func applyMetadata(dataFields *api.Secret, Annotations map[string]string) map[st
 		}
 
 	}
-	for k, v := range dataFields.Data["metadata"].(map[string]interface{})["custom_metadata"].(map[string]interface{}) {
-		// we handle descriptions for KVs here, in order to show which secrets are handled by which SSG.
-		switch v.(type) {
-		case float64:
-			float64value := reflect.ValueOf(v)
-			float64convert := strconv.FormatFloat(float64value.Float(), 'f', -1, 64)
-			Annotations[k] = float64convert
-			log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["metadata"]}).Debug("createK8sSecret: dataFields.Data[metadata][custom_metadata] case match float64 ")
-		case string:
-			Annotations[k] = v.(string)
-			log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["metadata"]}).Debug("createK8sSecret: dataFields.Data[metadata][custom_metadata] case match string ")
-		case bool:
-			booleanvalue := reflect.ValueOf(v)
-			boolconvert := strconv.FormatBool(booleanvalue.Bool())
-			Annotations[k] = boolconvert
-			log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["metadata"]}).Debug("createK8sSecret: dataFields.Data[metadata][custom_metadata] case match bool ")
+	_, customMetadataFound := GetCustomMetadataFromSecret(dataFields)
+	if customMetadataFound {
+
+		for k, v := range dataFields.Data["metadata"].(map[string]interface{})["custom_metadata"].(map[string]interface{}) {
+			// we handle descriptions for KVs here, in order to show which secrets are handled by which SSG.
+			switch v.(type) {
+			case float64:
+				float64value := reflect.ValueOf(v)
+				float64convert := strconv.FormatFloat(float64value.Float(), 'f', -1, 64)
+				Annotations[k] = float64convert
+				log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["metadata"]}).Debug("createK8sSecret: dataFields.Data[metadata][custom_metadata] case match float64 ")
+			case string:
+				Annotations[k] = v.(string)
+				log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["metadata"]}).Debug("createK8sSecret: dataFields.Data[metadata][custom_metadata] case match string ")
+			case bool:
+				booleanvalue := reflect.ValueOf(v)
+				boolconvert := strconv.FormatBool(booleanvalue.Bool())
+				Annotations[k] = boolconvert
+				log.WithFields(log.Fields{"key": k, "value": v, "datafields": dataFields.Data["metadata"]}).Debug("createK8sSecret: dataFields.Data[metadata][custom_metadata] case match bool ")
+			}
 		}
 	}
 
