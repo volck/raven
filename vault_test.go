@@ -7,6 +7,7 @@ import (
 	"fmt"
 	sealedSecretPkg "github.com/bitnami-labs/sealed-secrets/pkg/apis/sealed-secrets/v1alpha1"
 	. "github.com/hashicorp/vault-plugin-secrets-kv"
+	"github.com/stretchr/testify/assert"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"reflect"
@@ -70,7 +71,7 @@ func TestGetSingleKV(t *testing.T) {
 	}
 	secretList := list.Data["keys"].([]interface{})
 
-	persistVaultChanges(secretList, client, config)
+	synchronizeVaultSecrets(secretList, client, config)
 
 }
 
@@ -120,15 +121,15 @@ func TestReadAllKV(t *testing.T) {
 		fmt.Println(err)
 	}
 	secretList := list.Data["keys"].([]interface{})
-	mySecretList = map[string]*api.Secret{}
-	persistVaultChanges(secretList, client, config)
+	currentSecrets = map[string]*api.Secret{}
+	synchronizeVaultSecrets(secretList, client, config)
 
-	fmt.Println("TestReadAllKV len of mysecretlist:", len(mySecretList))
+	fmt.Println("TestReadAllKV len of mysecretlist:", len(currentSecrets))
 
-	for k, v := range mySecretList {
+	for k, v := range currentSecrets {
 		fmt.Printf("TestReadAll -  key: %v, value: %v \n", k, v)
 	}
-	if len(mySecretList) != 3 {
+	if len(currentSecrets) != 3 {
 		t.Fatal("TestReadAll list != 3. should be 3\n")
 	}
 
@@ -382,9 +383,9 @@ func TestPickRipeSecretsReturnsOne(t *testing.T) {
 	}
 	previousKV := PreviousKV.Data["keys"].([]interface{})
 
-	persistVaultChanges(previousKV, client, config)
-	fmt.Println("pre: setting state to this", mySecretList)
-	firstState := mySecretList
+	synchronizeVaultSecrets(previousKV, client, config)
+	fmt.Println("pre: setting state to this", currentSecrets)
+	firstState := currentSecrets
 
 	deleteTestSecrets(t, client, config, secretName)
 
@@ -393,10 +394,10 @@ func TestPickRipeSecretsReturnsOne(t *testing.T) {
 		fmt.Println(err)
 	}
 	newKV := NewKV.Data["keys"].([]interface{})
-	mySecretList = map[string]*api.Secret{}
-	persistVaultChanges(newKV, client, config)
-	fmt.Println("post: setting state to this", mySecretList)
-	secondState := mySecretList
+	currentSecrets = map[string]*api.Secret{}
+	synchronizeVaultSecrets(newKV, client, config)
+	fmt.Println("post: setting state to this", currentSecrets)
+	secondState := currentSecrets
 
 	picked := PickRipeSecrets(firstState, secondState)
 	fmt.Println(picked, len(picked))
@@ -429,8 +430,8 @@ func TestPickRipeSecretsReturnsNoRipe(t *testing.T) {
 	}
 	previousKV := PreviousKV.Data["keys"].([]interface{})
 
-	persistVaultChanges(previousKV, client, config)
-	firstState := mySecretList
+	synchronizeVaultSecrets(previousKV, client, config)
+	firstState := currentSecrets
 
 	deleteTestSecrets(t, client, config, secretName)
 
@@ -440,8 +441,8 @@ func TestPickRipeSecretsReturnsNoRipe(t *testing.T) {
 	}
 	newKV := NewKV.Data["keys"].([]interface{})
 
-	persistVaultChanges(newKV, client, config)
-	secondState := mySecretList
+	synchronizeVaultSecrets(newKV, client, config)
+	secondState := currentSecrets
 	picked := PickRipeSecrets(firstState, secondState)
 	fmt.Println(picked, len(picked))
 	if len(picked) != 0 {
@@ -555,11 +556,11 @@ func TestGetCustomMetadataFromSecret(t *testing.T) {
 			name: "SecretWithNtSpecific",
 			secret: GenerateTestSecretsWithCustomMetadata(t, map[string]interface{}{
 				"custom_metadata": map[string]interface{}{
-					"AWS_ARN_REF": "arn:aws:secretsmanager:eu-north-1:533267334331",
+					"AWS_ARN_REF": "arn:aws:secretsmanager:eu-north-1:123456789101",
 				},
 			}),
 			want: map[string]interface{}{
-				"AWS_ARN_REF": "arn:aws:secretsmanager:eu-north-1:533267334331",
+				"AWS_ARN_REF": "arn:aws:secretsmanager:eu-north-1:123456789101",
 			},
 			wantErr: false,
 		},
@@ -630,47 +631,58 @@ func TestGetCustomMetadataFromVaultInstance(t *testing.T) {
 
 }
 
-func TestParseARN(t *testing.T) {
+func TestFindRipeAWSSecrets(t *testing.T) {
 	tests := []struct {
-		name    string
-		arn     string
-		secret  string
-		want    *ARN
-		wantErr bool
+		name       string
+		PreviousKV map[string]*api.Secret
+		NewKV      map[string]*api.Secret
+		expected   map[string]string
 	}{
 		{
-			name:    "Full ARN",
-			arn:     "arn:aws:secretsmanager:eu-north-1:533267334331:secret:qa01/test/demo-qHkXhm",
-			secret:  "qa01/test/demo-qHkXhm",
-			want:    &ARN{Partition: "arn:aws", Service: "secretsmanager", Region: "eu-north-1", AccountID: "533267334331", Resource: "secret:qa01/test/demo-qHkXhm"},
-			wantErr: false,
+			name: "NoRipeSecrets",
+			PreviousKV: map[string]*api.Secret{
+				"secret1": {Data: map[string]interface{}{"metadata": map[string]interface{}{"custom_metadata": map[string]interface{}{"AWS_ARN_REF": "arn:aws:secretsmanager:region:account-id:secret:secret1"}}}},
+				"secret2": {Data: map[string]interface{}{"metadata": map[string]interface{}{"custom_metadata": map[string]interface{}{"AWS_ARN_REF": "arn:aws:secretsmanager:region:account-id:secret:secret2"}}}},
+			},
+			NewKV: map[string]*api.Secret{
+				"secret1": {Data: map[string]interface{}{"metadata": map[string]interface{}{"custom_metadata": map[string]interface{}{"AWS_ARN_REF": "arn:aws:secretsmanager:region:account-id:secret:secret1"}}}},
+				"secret2": {Data: map[string]interface{}{"metadata": map[string]interface{}{"custom_metadata": map[string]interface{}{"AWS_ARN_REF": "arn:aws:secretsmanager:region:account-id:secret:secret2"}}}},
+			},
+			expected: map[string]string{},
 		},
 		{
-			name:    "Region and account number",
-			arn:     "eu-north-1:533267334331",
-			secret:  "someSecret",
-			want:    &ARN{Partition: "arn:aws", Service: "secretsmanager", Region: "eu-north-1", AccountID: "533267334331", Resource: "secretEngine/someSecret"},
-			wantErr: false,
+			name: "OneRipeSecret",
+			PreviousKV: map[string]*api.Secret{
+				"secret1": {Data: map[string]interface{}{"metadata": map[string]interface{}{"custom_metadata": map[string]interface{}{"AWS_ARN_REF": "arn:aws:secretsmanager:region:account-id:secret:secret1"}}}},
+				"secret2": {Data: map[string]interface{}{"metadata": map[string]interface{}{"custom_metadata": map[string]interface{}{"AWS_ARN_REF": "arn:aws:secretsmanager:region:account-id:secret:secret2"}}}},
+			},
+			NewKV: map[string]*api.Secret{
+				"secret1": {Data: map[string]interface{}{"metadata": map[string]interface{}{"custom_metadata": map[string]interface{}{"AWS_ARN_REF": "arn:aws:secretsmanager:region:account-id:secret:secret1"}}}},
+				"secret2": {Data: map[string]interface{}{"metadata": map[string]interface{}{"custom_metadata": map[string]interface{}{"AWS_ARN_REF": "arn:aws:secretsmanager:region:account-id:secret:secret2-new"}}}},
+			},
+			expected: map[string]string{"secret2": "arn:aws:secretsmanager:region:account-id:secret:secret2"},
 		},
 		{
-			name:    "Invalid ARN",
-			arn:     "invalid:arn",
-			secret:  "",
-			want:    nil,
-			wantErr: true,
+			name: "MultipleRipeSecrets",
+			PreviousKV: map[string]*api.Secret{
+				"secret1": {Data: map[string]interface{}{"metadata": map[string]interface{}{"custom_metadata": map[string]interface{}{"AWS_ARN_REF": "arn:aws:secretsmanager:region:account-id:secret:secret1"}}}},
+				"secret2": {Data: map[string]interface{}{"metadata": map[string]interface{}{"custom_metadata": map[string]interface{}{"AWS_ARN_REF": "arn:aws:secretsmanager:region:account-id:secret:secret2"}}}},
+			},
+			NewKV: map[string]*api.Secret{
+				"secret1": {Data: map[string]interface{}{"metadata": map[string]interface{}{"custom_metadata": map[string]interface{}{"AWS_ARN_REF": "arn:aws:secretsmanager:region:account-id:secret:secret1-new"}}}},
+				"secret2": {Data: map[string]interface{}{"metadata": map[string]interface{}{"custom_metadata": map[string]interface{}{"AWS_ARN_REF": "arn:aws:secretsmanager:region:account-id:secret:secret2-new"}}}},
+			},
+			expected: map[string]string{
+				"secret1": "arn:aws:secretsmanager:region:account-id:secret:secret1",
+				"secret2": "arn:aws:secretsmanager:region:account-id:secret:secret2",
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ParseARN(tt.arn, "secretEngine", tt.secret)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ParseARN() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("ParseARN() got = %v, want %v", got, tt.want)
-			}
+			result := findRipeAWSSecrets(tt.PreviousKV, tt.NewKV)
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
