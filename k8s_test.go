@@ -3,16 +3,16 @@ package main
 import (
 	"context"
 	"fmt"
-	log "github.com/sirupsen/logrus"
+	"log/slog"
+	"os"
+	"strings"
+	"testing"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	testclient "k8s.io/client-go/kubernetes/fake"
-	"log/slog"
-	"os"
-	"strings"
-	"testing"
 )
 
 func TestCreatek8sSecret(t *testing.T) {
@@ -51,7 +51,7 @@ func TestCreatek8sSecret(t *testing.T) {
 
 			_, err := client.Logical().Write("kv/data/secret", tt.secrets)
 			if err != nil {
-				log.WithFields(log.Fields{"error": err}).Error("Could not get list of secrets for kubernetes namespace")
+				jsonLogger.Error("Could not get list of secrets for kubernetes namespace", slog.Any("error", err))
 			}
 			singleSecret := getSingleKV(client, "kv", "secret")
 			fmt.Println(singleSecret.Data["metadata"].(map[string]interface{})["custom_metadata"])
@@ -183,7 +183,7 @@ emxMCi0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
 	// write testobject
 	_, err := client.Logical().Write("kv/data/b64data", b64DataSecret)
 	if err != nil {
-		log.WithFields(log.Fields{"error": err}).Error("client.Logical().Write(\"kv/data/b64data\", b64DataSecret)")
+		jsonLogger.Error("Could not get list of secrets for kubernetes namespace", slog.Any("error", err))
 
 	}
 	singleSecret := getSingleKV(client, "kv", "b64data")
@@ -261,8 +261,8 @@ func TestCleanKubernetes(t *testing.T) {
 		fmt.Println(err)
 	}
 	previousKV := PreviousKV.Data["keys"].([]interface{})
-	persistVaultChanges(previousKV, client, config)
-	previouskvlst := mySecretList
+	synchronizeVaultSecrets(previousKV, client, config)
+	previouskvlst := currentSecrets
 	deleteTestSecrets(t, client, config, secretName)
 
 	newKV, err := getAllKVs(client, config)
@@ -270,8 +270,8 @@ func TestCleanKubernetes(t *testing.T) {
 		fmt.Println(err)
 	}
 	newkvlst := newKV.Data["keys"].([]interface{})
-	persistVaultChanges(newkvlst, client, config)
-	picked := PickRipeSecrets(previouskvlst, mySecretList)
+	synchronizeVaultSecrets(newkvlst, client, config)
+	picked := PickRipeSecrets(previouskvlst, currentSecrets)
 	fmt.Println(picked, len(picked))
 
 	k8slistPre, err := kubernetesSecretList(Clientset, config.destEnv)
@@ -524,7 +524,7 @@ func TestWatcher_MonitorNamespaceForSecretChange(t *testing.T) {
 	}
 	_, err = client.Logical().Write("kv/data/secret", secrets)
 	if err != nil {
-		log.WithFields(log.Fields{"error": err}).Error("Could not get list of secrets for kubernetes namespace")
+		jsonLogger.Error("Could not get list of secrets for kubernetes namespace", slog.Any("error", err))
 	}
 
 	//w.MonitorNamespaceForSecretChange()
