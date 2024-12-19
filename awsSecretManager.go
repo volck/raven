@@ -12,7 +12,9 @@ import (
 	"github.com/hashicorp/vault/api"
 	"log"
 	"log/slog"
+	"os"
 	"strings"
+	"time"
 )
 
 // ARN represents the structure of an Amazon Resource Name (ARN).
@@ -36,54 +38,63 @@ func ExtractCustomKeyFromCustomMetadata(key string, secret *api.Secret) (interfa
 	return nil, fmt.Errorf("key %s not found in custom metadata", key)
 }
 
-func ParseARN(arn string, secretEngine string, secretName string) (correctedArn *ARN, err error) {
-	theRebuiltARN := ARN{}
-	if strings.HasPrefix(arn, "arn:aws:secretsmanager:") {
-		parts := strings.Split(arn, ":")
-		if len(parts) != 7 {
-			return nil, fmt.Errorf("invalid arn: %s", arn)
-		}
-		theRebuiltARN.Partition = "arn:aws"
-		theRebuiltARN.Service = "secretsmanager"
-		theRebuiltARN.Region = parts[3]
-		theRebuiltARN.AccountID = parts[4]
-		theRebuiltARN.Resource = fmt.Sprintf("secret:%s", parts[6])
-
-		return &theRebuiltARN, nil
-	} else {
-		parts := strings.Split(arn, ":")
-		if len(parts) != 2 {
-			return nil, fmt.Errorf("invalid arn: %s", arn)
+func ParseARN(arn string, secretEngine string, secretName string) (correctedArn []ARN) {
+	arnSplit := strings.Split(arn, ",")
+	parsedArns := []ARN{}
+	for _, singleArn := range arnSplit {
+		theRebuiltARN := ARN{}
+		if strings.HasPrefix(singleArn, "arn:aws:secretsmanager:") {
+			parts := strings.Split(singleArn, ":")
+			if len(parts) != 7 {
+				return nil
+			}
+			theRebuiltARN.Partition = "arn:aws"
+			theRebuiltARN.Service = "secretsmanager"
+			theRebuiltARN.Region = parts[3]
+			theRebuiltARN.AccountID = parts[4]
+			theRebuiltARN.Resource = fmt.Sprintf("secret:%s", parts[6])
+			parsedArns = append(parsedArns, theRebuiltARN)
 		} else {
-			if secretName != "" {
-				secretPath := fmt.Sprintf("%s/%s", secretEngine, secretName)
-				theRebuiltARN.Partition = "arn:aws"
-				theRebuiltARN.Service = "secretsmanager"
-				theRebuiltARN.Region = parts[0]
-				theRebuiltARN.AccountID = parts[1]
-				theRebuiltARN.Resource = secretPath
-				return &theRebuiltARN, nil
+			parts := strings.Split(singleArn, ":")
+			if len(parts) != 2 {
+				jsonLogger.Info("ARN is malformed", "arn", arn)
 			} else {
-				return nil, fmt.Errorf("ARN is malformed: %s", arn)
+				if secretName != "" {
+					theRebuiltARN = ARN{}
+					secretPath := fmt.Sprintf("%s/%s", secretEngine, secretName)
+					theRebuiltARN.Partition = "arn:aws"
+					theRebuiltARN.Service = "secretsmanager"
+					theRebuiltARN.Region = parts[0]
+					theRebuiltARN.AccountID = parts[1]
+					theRebuiltARN.Resource = secretPath
+					parsedArns = append(parsedArns, theRebuiltARN)
+				} else {
+					jsonLogger.Info("ARN is malformed", "arn", arn)
+				}
 			}
 		}
 	}
+	return parsedArns
 }
-
 func GetAwsSecret(awssecretmgrsvc awssecretmanager.Client, path string) (*awssecretmanager.GetSecretValueOutput, error) {
-	// Load the Shared AWS Configuration (~/.aws/config)
 
-	input := &awssecretmanager.GetSecretValueInput{
-		SecretId: aws.String(path),
+	AwsSecretPrefix := os.Getenv("AWS_SECRET_PREFIX")
+
+	if AwsSecretPrefix != "" {
+
+		input := &awssecretmanager.GetSecretValueInput{
+			SecretId: aws.String(path),
+		}
+		result, err := awssecretmgrsvc.GetSecretValue(context.TODO(), input)
+		if err != nil {
+
+			// For a list of exceptions thrown, see
+			// https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_GetSecretValue.html
+			return nil, err
+		}
+		return result, err
 	}
-	result, err := awssecretmgrsvc.GetSecretValue(context.TODO(), input)
-	if err != nil {
-		// For a list of exceptions thrown, see
-		// https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_GetSecretValue.html
-		return nil, err
-	}
-	fmt.Println(result.ResultMetadata)
-	return result, err
+	return nil, fmt.Errorf("AWS_SECRET_PREFIX not set")
 }
 
 func CreateAWSSecret(secret api.Secret, secretName string) (secretInput *awssecretmanager.CreateSecretInput, err error) {
@@ -105,59 +116,61 @@ func WriteAWSKeyValueSecret(secret *api.Secret, secretName string) error {
 
 	_, found := GetCustomMetadataFromSecret(secret)
 
-	if found {
+	awsSecretPrefix := os.Getenv("AWS_SECRET_PREFIX")
+	awsRole := os.Getenv("AWS_ROLE_NAME")
+	if found && awsSecretPrefix != "" {
+
+		secretName = fmt.Sprintf("%s/%s", awsSecretPrefix, secretName)
 		extractedARN, err := ExtractCustomKeyFromCustomMetadata("AWS_ARN_REF", secret)
 		if err != nil {
 			return err
 		}
-		theArn, err := ParseARN(extractedARN.(string), newConfig.secretEngine, secretName)
-		if err != nil {
-			fmt.Println(err)
-		}
+		parsedARNs := ParseARN(extractedARN.(string), newConfig.secretEngine, secretName)
 
-		svc, err := NewAwsSecretManager(theArn.AccountID, "nt-a01631-secretsmanager")
-		if err != nil {
-			fmt.Println(err)
+		if parsedARNs != nil {
+			for _, parsedArn := range parsedARNs {
+				svc, err := NewAwsSecretManager(parsedArn.AccountID, awsRole)
+				if err != nil {
+					fmt.Println(err)
 
-			return err
-		}
-		secretValueOutput, err := GetAwsSecret(*svc, secretName)
-		if err != nil {
-			fmt.Println(err)
-			return err
-		}
+					return err
+				}
 
-		if secretValueOutput == nil {
-			secretInput, err := CreateAWSSecret(*secret, secretName)
-			if err != nil {
-				fmt.Println(err)
-				return err
+				secretValueOutput, err := GetAwsSecret(*svc, secretName)
+				if err != nil {
+
+				}
+
+				if secretValueOutput == nil {
+					secretInput, err := CreateAWSSecret(*secret, secretName)
+					if err != nil {
+						fmt.Println(err)
+					}
+					err = CreateAWSSecretInManager(svc, secretInput)
+				} else {
+					secretInput, err := UpdateAWSSecret(secret, *secretValueOutput.ARN)
+					if err != nil {
+						fmt.Println(err)
+					}
+					err = UpdateSecretInAWSSecretManager(svc, secretInput)
+					if err != nil {
+						fmt.Println(err)
+					}
+				}
 			}
-			err = CreateSecretinAWSSecretManager(svc, secretInput)
-			return err
-		} else {
-			secretInput, err := UpdateAWSSecret(secret, secretValueOutput.ARN)
-			if err != nil {
-				fmt.Println(err)
-			}
-			err = UpdateSecretInAWSSecretManager(svc, secretInput)
-			if err != nil {
-				fmt.Println(err)
-			}
-			return err
 		}
 	}
 	return fmt.Errorf("desired key %s not found in secret. Could not write to AWS", "AWS_ARN_REF")
 }
 
-func UpdateAWSSecret(secret *api.Secret, arn *string) (*awssecretmanager.UpdateSecretInput, error) {
+func UpdateAWSSecret(secret *api.Secret, arn string) (*awssecretmanager.UpdateSecretInput, error) {
 	if secret != nil {
 		dataString, err := json.Marshal(secret.Data["data"].(map[string]interface{}))
 		if err != nil {
 			return nil, err
 		}
 		updateInput := awssecretmanager.UpdateSecretInput{
-			SecretId:     aws.String(*arn),
+			SecretId:     aws.String(arn),
 			Description:  aws.String("managedby/Raven"),
 			SecretString: aws.String(string(dataString)),
 		}
@@ -166,30 +179,46 @@ func UpdateAWSSecret(secret *api.Secret, arn *string) (*awssecretmanager.UpdateS
 	return nil, fmt.Errorf("secret is nil")
 }
 
-func CreateSecretinAWSSecretManager(svc *awssecretmanager.Client, input *awssecretmanager.CreateSecretInput) (err error) {
+func CreateAWSSecretInManager(svc *awssecretmanager.Client, input *awssecretmanager.CreateSecretInput) (err error) {
 
 	createdSecret, err := svc.CreateSecret(context.TODO(), input)
 	if err != nil {
-		fmt.Println(err)
+		jsonLogger.Error("error creating secret in AWS Secret Manager", "error", err)
+	} else {
+
+		jsonLogger.Info("created secret in AWS Secret Manager", "secretName", *createdSecret.Name, "ARN", *createdSecret.ARN)
+		AWSWebHookUrl := os.Getenv("AWS_NOTIFICATION_WEBHOOK_URL")
+		if AWSWebHookUrl != "" {
+			msgText := fmt.Sprintf("Raven created secret %v in AWS Secret Manager with the ARN %s", *createdSecret.Name, *createdSecret.ARN)
+			NotifyTeamsChannel("Raven created secret in AWS Secret Manager", msgText, AWSWebHookUrl)
+		}
 	}
-
-	slog.Info("created secret in AWS Secret Manager", "secretName", *createdSecret.Name, "ARN", *createdSecret.ARN)
-
 	return err
 }
 func UpdateSecretInAWSSecretManager(svc *awssecretmanager.Client, input *awssecretmanager.UpdateSecretInput) error {
 
-	updatedSecret, err := svc.UpdateSecret(context.TODO(), input)
-	if err != nil {
+	AwsSecretPrefix := os.Getenv("AWS_SECRET_PREFIX")
+
+	if AwsSecretPrefix != "" {
+
+		updatedSecret, err := svc.UpdateSecret(context.TODO(), input)
+		if err != nil {
+			return err
+		}
+
+		jsonLogger.Info("Updated secret in AWS Secret Manager", "secretName", *updatedSecret.Name, "ARN", *updatedSecret.ARN)
+		AWSWebHookUrl := os.Getenv("AWS_NOTIFICATION_WEBHOOK_URL")
+		if AWSWebHookUrl != "" {
+			msgText := fmt.Sprintf("Raven updated secret(%v) with the ARN %v", *updatedSecret.Name, updatedSecret.ARN)
+			NotifyTeamsChannel("Raven updated secret in AWS Secret Manager", msgText, AWSWebHookUrl)
+		}
 		return err
 	}
-
-	slog.Info("Updated secret in AWS Secret Manager", "secretName", *updatedSecret.Name, "ARN", *updatedSecret.ARN)
-	return err
+	return fmt.Errorf("AWS_SECRET_PREFIX not set")
 
 }
 
-func NewAwsSecretManager(accountId string, roleName string) (*awssecretmanager.Client, error) {
+func NewAwsSecretManager(accountId string, awsRoleName string) (*awssecretmanager.Client, error) {
 	cfg, err := awsconfig.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		log.Fatal(err)
@@ -199,34 +228,108 @@ func NewAwsSecretManager(accountId string, roleName string) (*awssecretmanager.C
 	stsClient := sts.NewFromConfig(cfg)
 
 	// Assume the role
-	roleToAssume := fmt.Sprintf("arn:aws:iam::%s:role/%s", accountId, roleName)
-	//roleToAssume := "arn:aws:iam::288929571942:role/nt-a01631-secretsmanager"
-	//roleToAssume := "arn:aws:iam::368583481731:role/nt-a01631-secretsmanager"
-
+	roleToAssume := fmt.Sprintf("arn:aws:iam::%s:role/%s", accountId, awsRoleName)
+	jsonLogger.Info("attempting to use role", "role", roleToAssume)
 	provider := stscreds.NewAssumeRoleProvider(stsClient, roleToAssume)
 	creds := aws.NewCredentialsCache(provider)
-
 	// Create a new config with the credentials from the assumed role
 	assumedRoleConfig := cfg.Copy()
 	assumedRoleConfig.Credentials = creds
 
 	svc := awssecretmanager.NewFromConfig(assumedRoleConfig)
-
 	return svc, err
 }
 
 func ListAWSSecrets(svc *awssecretmanager.Client) (*awssecretmanager.ListSecretsOutput, error) {
-
-	//filter := []types.Filter{
-	//	{
-	//		Key:    "tag-key",
-	//		Values: []string{"managedby/Raven"},
-	//	},
-	//}
 
 	AWSSecretList, err := svc.ListSecrets(context.TODO(), &awssecretmanager.ListSecretsInput{})
 	if err != nil {
 		return nil, err
 	}
 	return AWSSecretList, nil
+}
+
+func DeleteAWSSecrets(Arn string, secretName string, cfg *config) (*awssecretmanager.DeleteSecretOutput, error) {
+
+	secretName = fmt.Sprintf("%s/%s", cfg.awsSecretPrefix, secretName)
+
+	if cfg.awsSecretPrefix != "" {
+		parsedArn := ParseARN(Arn, cfg.secretEngine, secretName)
+		fmt.Println(parsedArn[0])
+		if parsedArn != nil {
+			svc, err := NewAwsSecretManager(parsedArn[0].AccountID, cfg.awsRole)
+			if err != nil {
+				jsonLogger.Error("error creating AWS Secret Manager client", "error", err)
+			}
+			deletedSecret, err := svc.DeleteSecret(context.TODO(), &awssecretmanager.DeleteSecretInput{SecretId: aws.String(secretName)})
+			if err != nil {
+				jsonLogger.Info("error deleting secret in AWS Secret Manager", "error", err)
+				return nil, err
+			}
+			jsonLogger.Info("deleted secret in AWS Secret Manager", "ArnRef", *deletedSecret.Name, "ARN", *deletedSecret.ARN)
+			return deletedSecret, nil
+		}
+	}
+	return nil, fmt.Errorf("error parsing ARN")
+}
+
+func HarvestRipeAwsSecrets(ripeSecrets map[string]string, c config) {
+	for secretName, ripe := range ripeSecrets {
+		jsonLogger.Info("HarvestRipeSecrets found ripe secret. Deleting in AWS secrets manager", "ripeSecret", ripe)
+		deletedSecret, err := DeleteAWSSecrets(ripe, secretName, &c)
+		if err != nil {
+			jsonLogger.Info("error deleting secret in AWS Secret Manager", "error", err, "ripeSecret", ripe)
+		}
+		jsonLogger.Info("HarvestRipeSecrets found ripe secret. Deleting in AWS secrets manager", "ripeSecret", *deletedSecret.Name, "date", *deletedSecret.DeletionDate)
+	}
+}
+
+func WriteMissingAWSSecrets(currentSecretList map[string]*api.Secret, c config) {
+	t := time.Now()
+
+	minute := t.Minute()
+
+	if minute > 25 && minute <= 30 || minute > 55 && minute <= 60 {
+
+		jsonLogger.Info("checking for missing aws secrets", slog.Any("currentSecretList", currentSecretList))
+		jsonLogger.Info("AWS envvars", "AWS_SECRET_PREFIX", os.Getenv("AWS_SECRET_PREFIX"), "AWS_ROLE_NAME", os.Getenv("AWS_ROLE_NAME"))
+		for secretName, val := range currentSecretList {
+			_, found := GetCustomMetadataFromSecret(val)
+			awsSecretPrefix := os.Getenv("AWS_SECRET_PREFIX")
+			if found && awsSecretPrefix != "" {
+
+				extractedKeys, err := ExtractCustomKeyFromCustomMetadata("AWS_ARN_REF", val)
+				if err != nil {
+					jsonLogger.Info("error extracting key from custom metadata", "error", err)
+				}
+
+				correctedArns := ParseARN(extractedKeys.(string), newConfig.secretEngine, secretName)
+				jsonLogger.Info("found these arns", "correctedArns", correctedArns)
+				for _, correctedArn := range correctedArns {
+					svc, err := NewAwsSecretManager(correctedArn.AccountID, c.awsRole)
+					if err != nil {
+						jsonLogger.Error("error creating AWS Secret Manager client", "error", err)
+					}
+					awsPrefixSecretName := fmt.Sprintf("%s/%s", awsSecretPrefix, secretName)
+					secretOutput, _ := GetAwsSecret(*svc, awsPrefixSecretName)
+					if err != nil {
+						jsonLogger.Info("error getting secret from AWS Secret Manager", "error", err)
+					}
+					if secretOutput == nil {
+						jsonLogger.Info("found missing secret in Vault which is not in AWS. Writing it to secret manager", "awsPrefixSecretName", awsPrefixSecretName)
+						secretInput, err := CreateAWSSecret(*val, awsPrefixSecretName)
+						if err != nil {
+							jsonLogger.Info("error creating secret in AWS Secret Manager", "error", err)
+						}
+						err = CreateAWSSecretInManager(svc, secretInput)
+						if err != nil {
+							jsonLogger.Info("error creating secret in AWS Secret Manager", "error", err)
+						}
+					} else {
+						jsonLogger.Info("found secret in AWS Secret Manager", "awsPrefixSecretName", awsPrefixSecretName)
+					}
+				}
+			}
+		}
+	}
 }
