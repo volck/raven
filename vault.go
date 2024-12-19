@@ -2,16 +2,16 @@ package main
 
 import (
 	"fmt"
-	sealedSecretPkg "github.com/bitnami-labs/sealed-secrets/pkg/apis/sealed-secrets/v1alpha1"
-	"github.com/go-git/go-git/v5"
-	"github.com/hashicorp/vault/api"
-	log "github.com/sirupsen/logrus"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"strings"
+
+	sealedSecretPkg "github.com/bitnami-labs/sealed-secrets/pkg/apis/sealed-secrets/v1alpha1"
+	"github.com/go-git/go-git/v5"
+	"github.com/hashicorp/vault/api"
 )
 
-// We need to init the client a lot so this is a helper function which returns a fresh client.
 func client() (*api.Client, error) {
 	config := &api.Config{
 		Address:    newConfig.vaultEndpoint,
@@ -19,30 +19,27 @@ func client() (*api.Client, error) {
 	}
 	client, err := api.NewClient(config)
 	if err != nil {
-		log.WithFields(log.Fields{"config": config, "error": err.Error()}).Fatal("client.api.newclient() failed")
+		jsonLogger.Error("failed to create vault client",
+			"config", config,
+			"error", err)
+		return nil, err
 	}
 	client.SetToken(newConfig.token)
 	if err != nil {
-		log.WithFields(log.Fields{"config": config, "error": err.Error()}).Fatal("client.api.SetToken() failed")
+		jsonLogger.Error("failed to set vault token",
+			"config", config,
+			"error", err)
+		return nil, err
 	}
 	return client, err
 }
-
-/*
-getKVAndCreateSealedSecret combines several "maker-methods":
-* Get KV
-* make k8ssecret
-* return sealedsecretobject for further creation
-* return KV object in order to compare later.
-
-*/
 
 func getKVAndCreateSealedSecret(client *api.Client, config config, secretName string) (sealedSecret *sealedSecretPkg.SealedSecret, SingleKVFromVault *api.Secret) {
 	input := fmt.Sprintf("%s/", config.secretEngine)
 	iterateList(input, client, secretName)
 
-	for path, val := range mySecretList {
-		log.WithFields(log.Fields{"SingleKVFromVault": val}).Debug("getKVAndCreateSealedSecret.SingleKVFromVault")
+	for path, val := range currentSecrets {
+		jsonLogger.Debug("getKVAndCreateSealedSecret", "path", path, "val", val)
 		k8sSecret := createK8sSecret(path, config, val)
 		createSealedSecret(config.pemFile, &k8sSecret)
 	}
@@ -64,27 +61,21 @@ func removeFromWorkingtree(RipeSecrets []string, worktree *git.Worktree, newConf
 		newbase := base + "/" + RipeSecrets[ripe] + ".yaml"
 		_, err := worktree.Remove(newbase)
 		if err != nil {
-			log.WithFields(log.Fields{"err": err}).Error("HarvestRipeSecrets worktree.Remove failed")
+			jsonLogger.Error("removeFromWorktree remove failed", "err", err)
 		}
-		log.WithFields(log.Fields{"ripeSecret": RipeSecrets[ripe], "action": "delete"}).Info("HarvestRipeSecrets found ripe secret. marked for deletion")
-
+		jsonLogger.Info("HarvestRipeSecrets found ripe secret. marked for deletion", slog.String("absolutePath", newbase), slog.String("ripeSecret", RipeSecrets[ripe]), slog.String("action", "delete"))
 	}
 }
 
-// env string, token string
 func getAllKVs(client *api.Client, config config) (Secret *api.Secret, err error) {
 	url := config.secretEngine + "/metadata"
 
 	Secret, err = client.Logical().List(url)
 	if err != nil {
-		log.WithFields(log.Fields{"error": err}).Error("getAllKVs list error")
+		jsonLogger.Error("getAllKVs list error", "error", err)
 	}
 	return Secret, err
 }
-
-/*
-getsingleKV() used to iterate struct from getAllKVs(), takes secretname as input, returns struct for single secret. Requires uniform data.
-*/
 
 func iterateList(input string, c *api.Client, secretName string) *api.Secret {
 	p := ""
@@ -97,7 +88,7 @@ func iterateList(input string, c *api.Client, secretName string) *api.Secret {
 
 		secretNameList := strings.Split(p, "/")
 		pName := secretNameList[len(secretNameList)-1]
-		mySecretList[pName] = Secret
+		currentSecrets[pName] = Secret
 		return Secret
 	}
 
@@ -133,7 +124,7 @@ func getSingleKV(client *api.Client, env string, secretname string) (Secret *api
 	path := fmt.Sprintf("%s/data/%s", env, secretname)
 	Secret, err := client.Logical().Read(path)
 	if err != nil {
-		log.WithFields(log.Fields{"error": err}).Error("getSingleKV client read error")
+		jsonLogger.Error("getSingleKV client read error", "error", err)
 	}
 	return Secret
 
@@ -143,7 +134,7 @@ func validToken(client *api.Client) (valid bool) {
 
 	_, err := client.Auth().Token().LookupSelf()
 	if err != nil {
-		log.WithFields(log.Fields{"error": err}).Error("validateSelfTokenlookupself failed")
+		jsonLogger.Error("validateSelfTokenlookupself failed", "error", err)
 		valid = false
 		return valid
 	}
@@ -170,4 +161,30 @@ func GetCustomMetadataFromSecret(secret *api.Secret) (CustomMetadata map[string]
 		return nil, false
 	}
 	return customMetadata, true
+}
+
+func findRipeAWSSecrets(PreviousKV map[string]*api.Secret, NewKV map[string]*api.Secret) (RipeSecrets map[string]string) {
+	RipeSecrets = make(map[string]string)
+	if !firstRun(PreviousKV, NewKV) {
+		for nk, nv := range NewKV {
+			for pk, pv := range PreviousKV {
+				if nk == pk {
+					nvCustomData, err := ExtractCustomKeyFromCustomMetadata("AWS_ARN_REF", nv)
+					pvCustomData, err := ExtractCustomKeyFromCustomMetadata("AWS_ARN_REF", pv)
+					if err != nil {
+						jsonLogger.Debug("findRipeAWSSecrets.ExtractCustomKeyFromCustomMetadata failed", slog.Any("error", err))
+					}
+					if pvCustomData != nil && nvCustomData != nil {
+						if pvCustomData != nvCustomData {
+							theRipeArn := findArnDiff(pvCustomData.(string), nvCustomData.(string))
+							fmt.Println(nk, pk)
+							RipeSecrets[nk] = theRipeArn
+							fmt.Println(RipeSecrets)
+						}
+					}
+				}
+			}
+		}
+	}
+	return RipeSecrets
 }
