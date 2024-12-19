@@ -2,13 +2,14 @@ package main
 
 import (
 	"fmt"
-	sealedSecretPkg "github.com/bitnami-labs/sealed-secrets/pkg/apis/sealed-secrets/v1alpha1"
-	"github.com/hashicorp/vault/api"
-	log "github.com/sirupsen/logrus"
-	k8sJson "k8s.io/apimachinery/pkg/runtime/serializer/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+
+	sealedSecretPkg "github.com/bitnami-labs/sealed-secrets/pkg/apis/sealed-secrets/v1alpha1"
+	"github.com/hashicorp/vault/api"
+	k8sJson "k8s.io/apimachinery/pkg/runtime/serializer/json"
 )
 
 /*
@@ -21,11 +22,11 @@ func HarvestRipeSecrets(RipeSecrets []string, config config) {
 		removeFromWorkingtree(RipeSecrets, worktree, config)
 		status, err := getGitStatus(worktree)
 		if err != nil {
-			log.WithFields(log.Fields{"err": err}).Error("HarvestRipeSecret Worktree status failed")
+			jsonLogger.Error("HarvestRipeSecret Worktree status failed", "error", err)
 		}
 
 		if !status.IsClean() {
-			log.WithFields(log.Fields{"worktree": worktree, "status": status}).Debug("HarvestRipeSecret !status.IsClean() ")
+			jsonLogger.Debug("HarvestRipeSecret !status.IsClean()", "worktree", worktree, "status", status)
 			commitMessage := fmt.Sprintf("Raven removed ripe secret(s) from git")
 			commit, _ := makeCommit(worktree, commitMessage)
 			setPushOptions(config, repo, commit)
@@ -36,20 +37,20 @@ func HarvestRipeSecrets(RipeSecrets []string, config config) {
 			config.Clientset = NewKubernetesClient()
 			kubernetesSecretList, err := kubernetesSecretList(config.Clientset, config.destEnv)
 			if err != nil {
-				log.WithFields(log.Fields{"err": err}).Error("harvestripesecret secretlist fetch failed")
+				jsonLogger.Error("harvestripesecret secretlist fetch failed", "error", err)
 			}
 			config.Clientset = NewKubernetesClient()
 			kubernetesRemove(RipeSecrets, kubernetesSecretList, config.Clientset, config.destEnv)
-			log.WithFields(log.Fields{}).Debug("HarvestRipeSecrets done")
+			jsonLogger.Info("HarvestRipeSecrets done")
 		}
 	}
 }
 
-func SerializeAndWriteToFile(SealedSecret *sealedSecretPkg.SealedSecret, fullPath string) {
+func SerializeSealedSecretToFile(SealedSecret *sealedSecretPkg.SealedSecret, fullPath string) {
 
 	f, err := os.Create(fullPath)
 	if err != nil {
-		log.WithFields(log.Fields{"fullPath": fullPath, "error": err.Error()}).Fatal("SerializeAndWriteToFile.Os.Create")
+		jsonLogger.Error("SerializeSealedSecretToFile.Os.Create", "error", err)
 		WriteErrorToTerminationLog(err.Error())
 	}
 
@@ -61,25 +62,25 @@ func SerializeAndWriteToFile(SealedSecret *sealedSecretPkg.SealedSecret, fullPat
 	e := k8sJson.NewSerializerWithOptions(k8sJson.DefaultMetaFactory, nil, nil, options)
 	err = e.Encode(SealedSecret, f)
 	if err != nil {
-		log.WithFields(log.Fields{"fullPath": fullPath, "error": err.Error()}).Fatal("SerializeAndWriteToFile.e.encode")
+		jsonLogger.Error("SerializeSealedSecretToFile encoding error", "error", err)
 		WriteErrorToTerminationLog(err.Error())
 	}
 
 }
 
 /*
-ensurePathandreturnWritePath:
+ensurePathAndReturnWritePath:
 * build stringpath
 * create path
 
-makes sure that basePath exists for SerializeAndWriteToFile, returning basePath.
+makes sure that basePath exists for SerializeSealedSecretToFile, returning basePath.
 */
 
-func ensurePathandreturnWritePath(config config, secretName string) (basePath string) {
+func ensurePathAndReturnWritePath(config config, secretName string) (basePath string) {
 	base := filepath.Join(config.clonePath, "declarative", config.destEnv, "sealedsecrets")
 	err := os.MkdirAll(base, os.ModePerm)
 	if err != nil {
-		log.WithFields(log.Fields{"error": err.Error()}).Fatal("ensurePathandreturnWritePath.os.Mkdir")
+		jsonLogger.Error("ensurePathAndReturnWritePath.os.Mkdir", "error", err)
 	}
 	if strings.HasSuffix(secretName, "/") {
 		fmt.Println("need to replace strings here", secretName)
@@ -89,44 +90,68 @@ func ensurePathandreturnWritePath(config config, secretName string) (basePath st
 	return
 }
 
-func persistVaultChanges(secretList []interface{}, client *api.Client, config config) {
+func synchronizeVaultSecrets(secretList []interface{}, client *api.Client, config config) {
 	if secretList != nil {
 		for _, secret := range secretList {
-			log.WithFields(log.Fields{"secret": secret}).Debug("Checking secret")
+			jsonLogger.Debug("Checking secret", "secret", secret)
 			input := fmt.Sprintf("%s/", config.secretEngine)
 			iterateList(input, client, secret.(string))
 		}
-		if mySecretList != nil {
-			for path, val := range mySecretList {
-				log.WithFields(log.Fields{"SingleKVFromVault": val}).Debug("getKVAndCreateSealedSecret.SingleKVFromVault")
-				k8sSecret := createK8sSecret(path, config, val)
+		if currentSecrets != nil {
+			for path, theVaultSecret := range currentSecrets {
+				jsonLogger.Debug("getKVAndCreateSealedSecret", "path", path, "theVaultSecret", theVaultSecret)
+				k8sSecret := createK8sSecret(path, config, theVaultSecret)
 				SealedSecret := createSealedSecret(config.pemFile, &k8sSecret)
 
-				err := WriteAWSKeyValueSecret(val, path)
-				if err != nil {
-					log.WithFields(log.Fields{"error": err, "secret": val}).Debug("persistVaultChanges.WriteAWSKeyValueSecret")
-				}
-				newBase := ensurePathandreturnWritePath(newConfig, SealedSecret.Name)
+				newBase := ensurePathAndReturnWritePath(newConfig, SealedSecret.Name)
 				if _, err := os.Stat(newBase); os.IsNotExist(err) {
-					log.WithFields(log.Fields{"secret": SealedSecret.Name, "action": "request.operation.create"}).Info("Creating Sealed Secret")
-					SerializeAndWriteToFile(SealedSecret, newBase)
+					jsonLogger.Info("Creating Sealed Secret", slog.String("action", "request.operation.create"), slog.String("secret", SealedSecret.Name))
+					SerializeSealedSecretToFile(SealedSecret, newBase)
+					if config.awsWriteback == true {
+						err := WriteAWSKeyValueSecret(theVaultSecret, path)
+						if err != nil {
+							jsonLogger.Error("synchronizeVaultSecrets.WriteAWSKeyValueSecret", "error", err)
+						}
+					} else {
+						jsonLogger.Debug("AWS_WRITEBACK not set")
+					}
+					KubernetesNotificationUrl := os.Getenv("KUBERNETES_NOTIFICATION_WEBHOOK_URL")
+					if KubernetesNotificationUrl != "" {
+						msgTitle := "Raven created sealed secret in git"
+						msgBody := fmt.Sprintf("created sealed secret in git: %s", SealedSecret.Name)
+						NotifyTeamsChannel(msgTitle, msgBody, KubernetesNotificationUrl)
+					}
 					initKubernetesSearch(path, newConfig)
-				} else if !readSealedSecretAndCompareWithVaultStruct(SealedSecret.Name, val, newBase, newConfig.secretEngine) {
-					log.WithFields(log.Fields{"secret": val, "action": "request.operation.compare"}).Debug("readSealedSecretAndCompare: we already have this secret. Vault did not update")
+				} else if !readSealedSecretAndCompareWithVaultStruct(SealedSecret.Name, theVaultSecret, newBase, newConfig.secretEngine) {
+					jsonLogger.Debug("readSealedSecretAndCompare: we already have this secret. Vault did not update", slog.String("secret", SealedSecret.Name))
 				} else {
 					// we need to update the secret.
-					log.WithFields(log.Fields{"secret": SealedSecret, "newBase": newBase, "action": "request.operation.update"}).Info("readSealedSecretAndCompare: updating secret")
-					SerializeAndWriteToFile(SealedSecret, newBase)
+					jsonLogger.Info("Updating Sealed Secret", slog.String("action", "request.operation.update"), slog.String("secret", SealedSecret.Name))
+					SerializeSealedSecretToFile(SealedSecret, newBase)
+					if config.awsWriteback == true {
+						err := WriteAWSKeyValueSecret(theVaultSecret, path)
+						if err != nil {
+							jsonLogger.Error("synchronizeVaultSecrets.WriteAWSKeyValueSecret", slog.Any("error", err))
+						}
+					} else {
+						jsonLogger.Debug("AWS_WRITEBACK not set")
+					}
+					KubernetesNotificationUrl := os.Getenv("KUBERNETES_NOTIFICATION_WEBHOOK_URL")
+					if KubernetesNotificationUrl != "" {
+						msgTitle := "Raven updated sealed secret in git"
+						msgBody := fmt.Sprintf("created sealed secret in git: %s", SealedSecret.Name)
+						NotifyTeamsChannel(msgTitle, msgBody, KubernetesNotificationUrl)
+					}
 					initKubernetesSearch(SealedSecret.Name, newConfig)
 				}
 
 			}
 		} else {
-			fmt.Println("mysecretList empty")
+			jsonLogger.Info("currentSecrets is nil")
 		}
 
 	} else {
-		fmt.Println("secret list is empty")
+		jsonLogger.Info("secretList is nil")
 	}
 
 }
