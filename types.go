@@ -19,11 +19,15 @@ type config struct {
 	awsAccessKeyId     string
 	awsSecretAccessKey string
 	sleepTime          int
+	awsSecretPrefix    string
+	awsNotificationUrl string
+	awsRole            string
+	awsWriteback       bool
 }
 
 var secretNameLog []string
 
-var mySecretList = map[string]*api.Secret{}
+var currentSecrets = map[string]*api.Secret{}
 
 type SecretContents struct {
 	stringdata  map[string]string
