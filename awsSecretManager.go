@@ -11,7 +11,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/hashicorp/vault/api"
 	"log"
-	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -125,36 +124,39 @@ func WriteAWSKeyValueSecret(secret *api.Secret, secretName string) error {
 		if err != nil {
 			return err
 		}
-		parsedARNs := ParseARN(extractedARN.(string), newConfig.secretEngine, secretName)
+		if extractedARN != nil {
 
-		if parsedARNs != nil {
-			for _, parsedArn := range parsedARNs {
-				svc, err := NewAwsSecretManager(parsedArn.AccountID, awsRole)
-				if err != nil {
-					fmt.Println(err)
+			parsedARNs := ParseARN(extractedARN.(string), newConfig.secretEngine, secretName)
 
-					return err
-				}
-
-				secretValueOutput, err := GetAwsSecret(*svc, secretName)
-				if err != nil {
-
-				}
-
-				if secretValueOutput == nil {
-					secretInput, err := CreateAWSSecret(*secret, secretName)
+			if parsedARNs != nil {
+				for _, parsedArn := range parsedARNs {
+					svc, err := NewAwsSecretManager(parsedArn.AccountID, awsRole)
 					if err != nil {
 						fmt.Println(err)
+
+						return err
 					}
-					err = CreateAWSSecretInManager(svc, secretInput)
-				} else {
-					secretInput, err := UpdateAWSSecret(secret, *secretValueOutput.ARN)
+
+					secretValueOutput, err := GetAwsSecret(*svc, secretName)
 					if err != nil {
-						fmt.Println(err)
+
 					}
-					err = UpdateSecretInAWSSecretManager(svc, secretInput)
-					if err != nil {
-						fmt.Println(err)
+
+					if secretValueOutput == nil {
+						secretInput, err := CreateAWSSecret(*secret, secretName)
+						if err != nil {
+							fmt.Println(err)
+						}
+						err = CreateAWSSecretInManager(svc, secretInput)
+					} else {
+						secretInput, err := UpdateAWSSecret(secret, *secretValueOutput.ARN)
+						if err != nil {
+							fmt.Println(err)
+						}
+						err = UpdateSecretInAWSSecretManager(svc, secretInput)
+						if err != nil {
+							fmt.Println(err)
+						}
 					}
 				}
 			}
@@ -291,7 +293,7 @@ func WriteMissingAWSSecrets(currentSecretList map[string]*api.Secret, c config) 
 
 	if minute > 25 && minute <= 30 || minute > 55 && minute <= 60 {
 
-		jsonLogger.Info("checking for missing aws secrets", slog.Any("currentSecretList", currentSecretList))
+		jsonLogger.Info("checking for missing aws secrets")
 		jsonLogger.Info("AWS envvars", "AWS_SECRET_PREFIX", os.Getenv("AWS_SECRET_PREFIX"), "AWS_ROLE_NAME", os.Getenv("AWS_ROLE_NAME"))
 		for secretName, val := range currentSecretList {
 			_, found := GetCustomMetadataFromSecret(val)
@@ -300,33 +302,35 @@ func WriteMissingAWSSecrets(currentSecretList map[string]*api.Secret, c config) 
 
 				extractedKeys, err := ExtractCustomKeyFromCustomMetadata("AWS_ARN_REF", val)
 				if err != nil {
-					jsonLogger.Info("error extracting key from custom metadata", "error", err)
+					jsonLogger.Error("error extracting key from custom metadata", "error", err)
 				}
 
 				correctedArns := ParseARN(extractedKeys.(string), newConfig.secretEngine, secretName)
 				jsonLogger.Info("found these arns", "correctedArns", correctedArns)
-				for _, correctedArn := range correctedArns {
-					svc, err := NewAwsSecretManager(correctedArn.AccountID, c.awsRole)
-					if err != nil {
-						jsonLogger.Error("error creating AWS Secret Manager client", "error", err)
-					}
-					awsPrefixSecretName := fmt.Sprintf("%s/%s", awsSecretPrefix, secretName)
-					secretOutput, _ := GetAwsSecret(*svc, awsPrefixSecretName)
-					if err != nil {
-						jsonLogger.Info("error getting secret from AWS Secret Manager", "error", err)
-					}
-					if secretOutput == nil {
-						jsonLogger.Info("found missing secret in Vault which is not in AWS. Writing it to secret manager", "awsPrefixSecretName", awsPrefixSecretName)
-						secretInput, err := CreateAWSSecret(*val, awsPrefixSecretName)
+				if len(correctedArns) > 0 {
+					for _, correctedArn := range correctedArns {
+						svc, err := NewAwsSecretManager(correctedArn.AccountID, c.awsRole)
 						if err != nil {
-							jsonLogger.Info("error creating secret in AWS Secret Manager", "error", err)
+							jsonLogger.Error("error creating AWS Secret Manager client", "error", err)
 						}
-						err = CreateAWSSecretInManager(svc, secretInput)
+						awsPrefixSecretName := fmt.Sprintf("%s/%s", awsSecretPrefix, secretName)
+						secretOutput, _ := GetAwsSecret(*svc, awsPrefixSecretName)
 						if err != nil {
-							jsonLogger.Info("error creating secret in AWS Secret Manager", "error", err)
+							jsonLogger.Info("error getting secret from AWS Secret Manager", "error", err)
 						}
-					} else {
-						jsonLogger.Info("found secret in AWS Secret Manager", "awsPrefixSecretName", awsPrefixSecretName)
+						if secretOutput == nil {
+							jsonLogger.Info("found missing secret in Vault which is not in AWS. Writing it to secret manager", "awsPrefixSecretName", awsPrefixSecretName)
+							secretInput, err := CreateAWSSecret(*val, awsPrefixSecretName)
+							if err != nil {
+								jsonLogger.Info("error creating secret in AWS Secret Manager", "error", err)
+							}
+							err = CreateAWSSecretInManager(svc, secretInput)
+							if err != nil {
+								jsonLogger.Info("error creating secret in AWS Secret Manager", "error", err)
+							}
+						} else {
+							jsonLogger.Info("found secret in AWS Secret Manager", "awsPrefixSecretName", awsPrefixSecretName)
+						}
 					}
 				}
 			}
