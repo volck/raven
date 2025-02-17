@@ -302,9 +302,13 @@ func WriteMissingAWSSecrets(currentSecretList map[string]*api.Secret, c config) 
 
 				extractedKeys, err := ExtractCustomKeyFromCustomMetadata("AWS_ARN_REF", val)
 				if err != nil {
-					jsonLogger.Error("error extracting key from custom metadata", "error", err)
+					jsonLogger.Debug("error extracting key from custom metadata", "error", err)
+					continue
 				}
-
+				if extractedKeys == nil {
+					jsonLogger.Debug("extracted key is nil")
+					continue
+				}
 				correctedArns := ParseARN(extractedKeys.(string), newConfig.secretEngine, secretName)
 				jsonLogger.Info("found these arns", "correctedArns", correctedArns)
 				if len(correctedArns) > 0 {
