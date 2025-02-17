@@ -252,6 +252,15 @@ func TestParseARN(t *testing.T) {
 			secret: "",
 			want:   []ARN{},
 		},
+		{
+			name:   "mixed list of Region and account number",
+			arn:    "eu-north-1:123456789101,arn:aws:secretsmanager:us-west-2:123456789101:secret:qa01/test/demo-qHkXhm",
+			secret: "someSecret",
+			want: []ARN{
+				{Partition: "arn:aws", Service: "secretsmanager", Region: "eu-north-1", AccountID: "123456789101", Resource: "secretEngine/someSecret"},
+				{Partition: "arn:aws", Service: "secretsmanager", Region: "us-west-2", AccountID: "123456789101", Resource: "secret:qa01/test/demo-qHkXhm"},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -315,7 +324,6 @@ func TestWriteMissingAWSSecrets(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Capture log output
 			c := config{awsRole: "aws-specific-role-for-secretsmanager", awsSecretPrefix: "/subPath/"}
 			WriteMissingAWSSecrets(tt.currentSecretList, c)
 		})
