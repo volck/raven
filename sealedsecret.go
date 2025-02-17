@@ -26,7 +26,7 @@ func readSealedSecretAndCompareWithVaultStruct(secret string, kv *api.Secret, fi
 	VaultTimeStamp := kv.Data["metadata"].(map[string]interface{})["created_time"]
 	theArnFromVault, err := ExtractCustomKeyFromCustomMetadata("AWS_ARN_REF", kv)
 	if err != nil {
-		jsonLogger.Error("readSealedSecretAndCompareWithVaultStruct.ExtractCustomKeyFromCustomMetadata", "error", err)
+		jsonLogger.Debug("readSealedSecretAndCompareWithVaultStruct.ExtractCustomKeyFromCustomMetadata", "error", err)
 	}
 	//grab SealedSecret file
 	data, err := os.ReadFile(filepointer)
