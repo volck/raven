@@ -17,7 +17,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-var jsonLogger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
+var jsonLogger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{AddSource: true}))
 
 func isBase64(s string) bool {
 	_, err := base64.StdEncoding.DecodeString(s)
