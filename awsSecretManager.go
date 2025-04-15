@@ -96,7 +96,7 @@ func GetAwsSecret(awssecretmgrsvc awssecretmanager.Client, path string) (*awssec
 	return nil, fmt.Errorf("AWS_SECRET_PREFIX not set")
 }
 
-func CreateAWSSecret(secret api.Secret, secretName string) (secretInput *awssecretmanager.CreateSecretInput, err error) {
+func CreateAWSSecret(secret api.Secret, awsSecretName string, KmsKeyId *string) (secretInput *awssecretmanager.CreateSecretInput, err error) {
 
 	dataString, err := json.Marshal(secret.Data["data"].(map[string]interface{}))
 
@@ -104,77 +104,102 @@ func CreateAWSSecret(secret api.Secret, secretName string) (secretInput *awssecr
 		return nil, err
 	}
 	secretInput = &awssecretmanager.CreateSecretInput{
-		Name:         aws.String(secretName),
+		Name:         aws.String(awsSecretName),
 		SecretString: aws.String(string(dataString)),
 		Tags:         nil,
+	}
+	if KmsKeyId != nil {
+		jsonLogger.Info("found KMS key", "KmsKeyId", *KmsKeyId, "awsSecretName", awsSecretName)
+		secretInput.KmsKeyId = KmsKeyId
 	}
 	return secretInput, nil
 }
 
-func WriteAWSKeyValueSecret(secret *api.Secret, secretName string) error {
+func WriteAWSKeyValueSecret(secret *api.Secret, secretName string, theConfig config) error {
 
 	_, found := GetCustomMetadataFromSecret(secret)
 
 	awsSecretPrefix := os.Getenv("AWS_SECRET_PREFIX")
 	awsRole := os.Getenv("AWS_ROLE_NAME")
 	if found && awsSecretPrefix != "" {
-
-		secretName = fmt.Sprintf("%s/%s", awsSecretPrefix, secretName)
+		enableEnvironmentPrefix, err := ExtractCustomKeyFromCustomMetadata("ENABLE_ON_PREM_ENVIRONMENT_PREFIX", secret)
+		if err != nil {
+			jsonLogger.Error("error extracting key from custom metadata", "error", err, "key", "ENABLE_ON_PREM_ENVIRONMENT_PREFIX")
+		}
+		jsonLogger.Info("ENABLE_ON_PREM_ENVIRONMENT_PREFIX", "enableEnvironmentPrefix", enableEnvironmentPrefix)
+		if enableEnvironmentPrefix == "true" {
+			jsonLogger.Info("ENABLE_ON_PREM_ENVIRONMENT_PREFIX is set. Using secretengine prefix", "secretEngine", theConfig.secretEngine)
+			secretName = fmt.Sprintf("%s/%s/%s", awsSecretPrefix, theConfig.secretEngine, secretName)
+		} else {
+			secretName = fmt.Sprintf("%s/%s", awsSecretPrefix, secretName)
+		}
 		extractedARN, err := ExtractCustomKeyFromCustomMetadata("AWS_ARN_REF", secret)
 		if err != nil {
 			return err
 		}
 		if extractedARN != nil {
-
+			newextractedKmsKeyId := new(string)
+			extractedKmsKeyId, _ := ExtractCustomKeyFromCustomMetadata("AWS_KMS_KEY", secret)
 			parsedARNs := ParseARN(extractedARN.(string), newConfig.secretEngine, secretName)
+
+			if extractedKmsKeyId != nil {
+				jsonLogger.Info("secret has KMS key defined.. Setting KMS key", "KmsKeyId", extractedKmsKeyId.(string))
+				*newextractedKmsKeyId = extractedKmsKeyId.(string)
+			}
 
 			if parsedARNs != nil {
 				for _, parsedArn := range parsedARNs {
 					svc, err := NewAwsSecretManager(parsedArn.AccountID, awsRole)
 					if err != nil {
-						fmt.Println(err)
-
+						jsonLogger.Error("error creating AWS Secret Manager client", "error", err)
 						return err
 					}
 
 					secretValueOutput, err := GetAwsSecret(*svc, secretName)
 					if err != nil {
-
+						jsonLogger.Error("GetAwsSecret error", "error", err)
 					}
 
 					if secretValueOutput == nil {
-						secretInput, err := CreateAWSSecret(*secret, secretName)
+						secretInput, err := CreateAWSSecret(*secret, secretName, newextractedKmsKeyId)
 						if err != nil {
-							fmt.Println(err)
+							jsonLogger.Error("error creating secret in AWS Secret Manager", "error", err)
 						}
 						err = CreateAWSSecretInManager(svc, secretInput)
 					} else {
-						secretInput, err := UpdateAWSSecret(secret, *secretValueOutput.ARN)
+						secretInput, err := UpdateAWSSecret(secret, *secretValueOutput.ARN, newextractedKmsKeyId)
 						if err != nil {
-							fmt.Println(err)
+							jsonLogger.Error("error updating secret in AWS Secret Manager", "error", err)
 						}
 						err = UpdateSecretInAWSSecretManager(svc, secretInput)
 						if err != nil {
-							fmt.Println(err)
+							jsonLogger.Error("error updating secret in AWS Secret Manager", "error", err)
 						}
 					}
 				}
 			}
 		}
+		if extractedARN == nil {
+			return fmt.Errorf("desired key %s not found in secret. Could not write to AWS", "AWS_ARN_REF")
+		}
 	}
-	return fmt.Errorf("desired key %s not found in secret. Could not write to AWS", "AWS_ARN_REF")
+	return nil
 }
 
-func UpdateAWSSecret(secret *api.Secret, arn string) (*awssecretmanager.UpdateSecretInput, error) {
+func UpdateAWSSecret(secret *api.Secret, secretIdArn string, KmsKeyId *string) (*awssecretmanager.UpdateSecretInput, error) {
 	if secret != nil {
 		dataString, err := json.Marshal(secret.Data["data"].(map[string]interface{}))
 		if err != nil {
 			return nil, err
 		}
 		updateInput := awssecretmanager.UpdateSecretInput{
-			SecretId:     aws.String(arn),
+			SecretId:     aws.String(secretIdArn),
 			Description:  aws.String("managedby/Raven"),
 			SecretString: aws.String(string(dataString)),
+		}
+		if KmsKeyId != nil {
+			jsonLogger.Info("secret has KMS key defined.. Setting KMS key", "KmsKeyId", *KmsKeyId)
+			updateInput.KmsKeyId = KmsKeyId
 		}
 		return &updateInput, nil
 	}
@@ -317,14 +342,22 @@ func WriteMissingAWSSecrets(currentSecretList map[string]*api.Secret, c config) 
 						if err != nil {
 							jsonLogger.Error("error creating AWS Secret Manager client", "error", err)
 						}
+						newextractedKmsKeyId := new(string)
+						extractedKmsKeyId, _ := ExtractCustomKeyFromCustomMetadata("AWS_KMS_KEY", val)
+
+						if extractedKmsKeyId != nil {
+							*newextractedKmsKeyId = extractedKmsKeyId.(string)
+							fmt.Println(*newextractedKmsKeyId)
+						}
+
 						awsPrefixSecretName := fmt.Sprintf("%s/%s", awsSecretPrefix, secretName)
-						secretOutput, _ := GetAwsSecret(*svc, awsPrefixSecretName)
+						secretOutput, err := GetAwsSecret(*svc, awsPrefixSecretName)
 						if err != nil {
 							jsonLogger.Info("error getting secret from AWS Secret Manager", "error", err)
 						}
 						if secretOutput == nil {
 							jsonLogger.Info("found missing secret in Vault which is not in AWS. Writing it to secret manager", "awsPrefixSecretName", awsPrefixSecretName)
-							secretInput, err := CreateAWSSecret(*val, awsPrefixSecretName)
+							secretInput, err := CreateAWSSecret(*val, awsPrefixSecretName, newextractedKmsKeyId)
 							if err != nil {
 								jsonLogger.Info("error creating secret in AWS Secret Manager", "error", err)
 							}
