@@ -62,9 +62,9 @@ func applyDatafieldsTok8sSecret(dataFields *api.Secret, Annotations map[string]s
 	stringdata = make(map[string]string)
 	data = make(map[string][]byte)
 	if dataFields.Data["data"] == nil {
-		jsonLogger.Info("Trying to apply data fields to kubernetes secret, but vault datafields seem to be empty. Was this secret deleted correctly? Skipping.", "secret", name)
+		jsonLogger.Debug("Trying to apply data fields to kubernetes secret, but vault datafields seem to be empty. Was this secret deleted correctly? Skipping.", "secret", name)
 	} else if len(dataFields.Data["data"].(map[string]interface{})) == 0 {
-		jsonLogger.Info("Trying to apply datafields to kubernetes secret, but no datafields could be placed.", "len(data[metadata])", len(dataFields.Data["metadata"].(map[string]interface{})), "secret", name)
+		jsonLogger.Debug("Trying to apply datafields to kubernetes secret, but no datafields could be placed.", "len(data[metadata])", len(dataFields.Data["metadata"].(map[string]interface{})), "secret", name)
 		return data, stringdata
 	} else {
 		for k, v := range dataFields.Data["data"].(map[string]interface{}) {
