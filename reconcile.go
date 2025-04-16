@@ -90,61 +90,74 @@ func ensurePathAndReturnWritePath(config config, secretName string) (basePath st
 	return
 }
 
-func synchronizeVaultSecrets(secretList []interface{}, client *api.Client, config config) {
+func synchronizeVaultSecrets(secretList []interface{}, client *api.Client, theConfig config) {
 	if secretList != nil {
 		for _, secret := range secretList {
 			jsonLogger.Debug("Checking secret", "secret", secret)
-			input := fmt.Sprintf("%s/", config.secretEngine)
+			input := fmt.Sprintf("%s/", theConfig.secretEngine)
 			iterateList(input, client, secret.(string))
 		}
 		if currentSecrets != nil {
 			for path, theVaultSecret := range currentSecrets {
 				jsonLogger.Debug("getKVAndCreateSealedSecret", "path", path, "theVaultSecret", theVaultSecret)
-				k8sSecret := createK8sSecret(path, config, theVaultSecret)
-				SealedSecret := createSealedSecret(config.pemFile, &k8sSecret)
-
-				newBase := ensurePathAndReturnWritePath(newConfig, SealedSecret.Name)
-				if _, err := os.Stat(newBase); os.IsNotExist(err) {
-					jsonLogger.Info("Creating Sealed Secret", slog.String("action", "request.operation.create"), slog.String("secret", SealedSecret.Name))
-					SerializeSealedSecretToFile(SealedSecret, newBase)
-					if config.awsWriteback == true {
-						err := WriteAWSKeyValueSecret(theVaultSecret, path)
-						if err != nil {
-							jsonLogger.Error("synchronizeVaultSecrets.WriteAWSKeyValueSecret", "error", err)
-						}
-					} else {
-						jsonLogger.Debug("AWS_WRITEBACK not set")
-					}
-					KubernetesNotificationUrl := os.Getenv("KUBERNETES_NOTIFICATION_WEBHOOK_URL")
-					if KubernetesNotificationUrl != "" {
-						msgTitle := "Raven created sealed secret in git"
-						msgBody := fmt.Sprintf("created sealed secret in git: %s", SealedSecret.Name)
-						NotifyTeamsChannel(msgTitle, msgBody, KubernetesNotificationUrl)
-					}
-					initKubernetesSearch(path, newConfig)
-				} else if !readSealedSecretAndCompareWithVaultStruct(SealedSecret.Name, theVaultSecret, newBase, newConfig.secretEngine) {
-					jsonLogger.Debug("readSealedSecretAndCompare: we already have this secret. Vault did not update", slog.String("secret", SealedSecret.Name))
-				} else {
-					// we need to update the secret.
-					jsonLogger.Info("Updating Sealed Secret", slog.String("action", "request.operation.update"), slog.String("secret", SealedSecret.Name))
-					SerializeSealedSecretToFile(SealedSecret, newBase)
-					if config.awsWriteback == true {
-						err := WriteAWSKeyValueSecret(theVaultSecret, path)
-						if err != nil {
-							jsonLogger.Error("synchronizeVaultSecrets.WriteAWSKeyValueSecret", slog.Any("error", err))
-						}
-					} else {
-						jsonLogger.Debug("AWS_WRITEBACK not set")
-					}
-					KubernetesNotificationUrl := os.Getenv("KUBERNETES_NOTIFICATION_WEBHOOK_URL")
-					if KubernetesNotificationUrl != "" {
-						msgTitle := "Raven updated sealed secret in git"
-						msgBody := fmt.Sprintf("created sealed secret in git: %s", SealedSecret.Name)
-						NotifyTeamsChannel(msgTitle, msgBody, KubernetesNotificationUrl)
-					}
-					initKubernetesSearch(SealedSecret.Name, newConfig)
+				NoSync, err := ExtractCustomKeyFromCustomMetadata("NO_SYNC", theVaultSecret)
+				if err != nil {
+					jsonLogger.Debug("synchronizeVaultSecrets.ExtractCustomKeyFromCustomMetadata", "error", err)
 				}
+				if NoSync != nil {
+					jsonLogger.Debug("synchronizeVaultSecrets: NO_SYNC is set for secret. Skipping", "secret", path)
+					continue
+				} else {
 
+					k8sSecret := createK8sSecret(path, theConfig, theVaultSecret)
+					SealedSecret := createSealedSecret(theConfig.pemFile, &k8sSecret)
+
+					newBase := ensurePathAndReturnWritePath(theConfig, SealedSecret.Name)
+					if _, err := os.Stat(newBase); os.IsNotExist(err) {
+						jsonLogger.Info("Creating Sealed Secret", slog.String("action", "request.operation.create"), slog.String("secret", SealedSecret.Name))
+						SerializeSealedSecretToFile(SealedSecret, newBase)
+						if theConfig.awsWriteback == true {
+							err := WriteAWSKeyValueSecret(theVaultSecret, path, theConfig)
+							if err != nil {
+								jsonLogger.Error("synchronizeVaultSecrets.WriteAWSKeyValueSecret", "error", err)
+							}
+						} else {
+							jsonLogger.Debug("AWS_WRITEBACK not set")
+						}
+						KubernetesNotificationUrl := os.Getenv("KUBERNETES_NOTIFICATION_WEBHOOK_URL")
+						if KubernetesNotificationUrl != "" {
+							msgTitle := "Raven created sealed secret in git"
+							msgBody := fmt.Sprintf("created sealed secret in git: %s", SealedSecret.Name)
+							NotifyTeamsChannel(msgTitle, msgBody, KubernetesNotificationUrl)
+						}
+						initKubernetesSearch(path, theConfig)
+					} else if !readSealedSecretAndCompareWithVaultStruct(theVaultSecret, newBase, theConfig.secretEngine) {
+						jsonLogger.Debug("readSealedSecretAndCompare: we already have this secret. Vault did not update", slog.String("secret", SealedSecret.Name))
+					} else {
+						// we need to update the secret.
+						jsonLogger.Info("Updating Sealed Secret", slog.String("action", "request.operation.update"), slog.String("secret", SealedSecret.Name))
+						SerializeSealedSecretToFile(SealedSecret, newBase)
+						if theConfig.awsWriteback == true {
+							// describe aws secret
+							//  aws.getsecret()
+							// write
+							err := WriteAWSKeyValueSecret(theVaultSecret, path, theConfig)
+							if err != nil {
+								jsonLogger.Error("synchronizeVaultSecrets.WriteAWSKeyValueSecret", slog.Any("error", err))
+							}
+						} else {
+							jsonLogger.Debug("AWS_WRITEBACK not set")
+						}
+						KubernetesNotificationUrl := os.Getenv("KUBERNETES_NOTIFICATION_WEBHOOK_URL")
+						if KubernetesNotificationUrl != "" {
+							msgTitle := "Raven updated sealed secret in git"
+							msgBody := fmt.Sprintf("created sealed secret in git: %s", SealedSecret.Name)
+							NotifyTeamsChannel(msgTitle, msgBody, KubernetesNotificationUrl)
+						}
+						initKubernetesSearch(SealedSecret.Name, theConfig)
+					}
+
+				}
 			}
 		} else {
 			jsonLogger.Info("currentSecrets is nil")
