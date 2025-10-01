@@ -163,9 +163,12 @@ func WriteAWSKeyValueSecret(secret *api.Secret, secretName string, theConfig con
 					if secretValueOutput == nil {
 						secretInput, err := CreateAWSSecret(*secret, secretName, newextractedKmsKeyId)
 						if err != nil {
-							jsonLogger.Error("error creating secret in AWS Secret Manager", "error", err)
+							jsonLogger.Error("error creating secret object for AWS Secret Manager", "error", err)
 						}
 						err = CreateAWSSecretInManager(svc, secretInput)
+						if err != nil {
+							jsonLogger.Error("could not create aws secret in manager", "error", err)
+						}
 					} else {
 						secretInput, err := UpdateAWSSecret(secret, *secretValueOutput.ARN, newextractedKmsKeyId)
 						if err != nil {
