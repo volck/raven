@@ -15,7 +15,7 @@ func TestForceNewSecrets(t *testing.T) {
 		secretEngine:  "kv",
 		token:         client.Token(),
 		destEnv:       "kv",
-		pemFile: 	`cert.crt`,
+		pemFile:       `cert.crt`,
 	}
 	secretName := "secret"
 	secretNameTwo := "secrettwo"
@@ -26,7 +26,7 @@ func TestForceNewSecrets(t *testing.T) {
 		fmt.Println("getkvlist err", err)
 	}
 	fmt.Println(list)
-	forcenewSecrets(client,config)
+	forcenewSecrets(client, config)
 }
 
 func TestForceNewSecretsWithEmptyKV(t *testing.T) {
@@ -39,13 +39,12 @@ func TestForceNewSecretsWithEmptyKV(t *testing.T) {
 		secretEngine:  "kv",
 		token:         client.Token(),
 		destEnv:       "kv",
-		pemFile: 	`cert.crt`,
+		pemFile:       `cert.crt`,
 	}
 	list, err := getAllKVs(client, config)
 	if err != nil {
 		fmt.Println("getkvlist err", err)
 	}
 	fmt.Println(list)
-	forcenewSecrets(client,config)
+	forcenewSecrets(client, config)
 }
-

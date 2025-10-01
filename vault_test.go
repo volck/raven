@@ -7,13 +7,16 @@ import (
 	"fmt"
 	sealedSecretPkg "github.com/bitnami-labs/sealed-secrets/pkg/apis/sealed-secrets/v1alpha1"
 	. "github.com/hashicorp/vault-plugin-secrets-kv"
+	"github.com/stretchr/testify/assert"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
+	"reflect"
 	"testing"
 
 	"github.com/hashicorp/vault/api"
 	vaulthttp "github.com/hashicorp/vault/http"
 	"github.com/hashicorp/vault/sdk/logical"
+
 	hashivault "github.com/hashicorp/vault/vault"
 )
 
@@ -68,7 +71,7 @@ func TestGetSingleKV(t *testing.T) {
 	}
 	secretList := list.Data["keys"].([]interface{})
 
-	persistVaultChanges(secretList, client, config)
+	synchronizeVaultSecrets(secretList, client, config)
 
 }
 
@@ -118,15 +121,15 @@ func TestReadAllKV(t *testing.T) {
 		fmt.Println(err)
 	}
 	secretList := list.Data["keys"].([]interface{})
-	mySecretList = map[string]*api.Secret{}
-	persistVaultChanges(secretList, client, config)
+	currentSecrets = map[string]*api.Secret{}
+	synchronizeVaultSecrets(secretList, client, config)
 
-	fmt.Println("TestReadAllKV len of mysecretlist:", len(mySecretList))
+	fmt.Println("TestReadAllKV len of mysecretlist:", len(currentSecrets))
 
-	for k, v := range mySecretList {
+	for k, v := range currentSecrets {
 		fmt.Printf("TestReadAll -  key: %v, value: %v \n", k, v)
 	}
-	if len(mySecretList) != 3 {
+	if len(currentSecrets) != 3 {
 		t.Fatal("TestReadAll list != 3. should be 3\n")
 	}
 
@@ -380,9 +383,9 @@ func TestPickRipeSecretsReturnsOne(t *testing.T) {
 	}
 	previousKV := PreviousKV.Data["keys"].([]interface{})
 
-	persistVaultChanges(previousKV, client, config)
-	fmt.Println("pre: setting state to this", mySecretList)
-	firstState := mySecretList
+	synchronizeVaultSecrets(previousKV, client, config)
+	fmt.Println("pre: setting state to this", currentSecrets)
+	firstState := currentSecrets
 
 	deleteTestSecrets(t, client, config, secretName)
 
@@ -391,10 +394,10 @@ func TestPickRipeSecretsReturnsOne(t *testing.T) {
 		fmt.Println(err)
 	}
 	newKV := NewKV.Data["keys"].([]interface{})
-	mySecretList = map[string]*api.Secret{}
-	persistVaultChanges(newKV, client, config)
-	fmt.Println("post: setting state to this", mySecretList)
-	secondState := mySecretList
+	currentSecrets = map[string]*api.Secret{}
+	synchronizeVaultSecrets(newKV, client, config)
+	fmt.Println("post: setting state to this", currentSecrets)
+	secondState := currentSecrets
 
 	picked := PickRipeSecrets(firstState, secondState)
 	fmt.Println(picked, len(picked))
@@ -427,8 +430,8 @@ func TestPickRipeSecretsReturnsNoRipe(t *testing.T) {
 	}
 	previousKV := PreviousKV.Data["keys"].([]interface{})
 
-	persistVaultChanges(previousKV, client, config)
-	firstState := mySecretList
+	synchronizeVaultSecrets(previousKV, client, config)
+	firstState := currentSecrets
 
 	deleteTestSecrets(t, client, config, secretName)
 
@@ -438,8 +441,8 @@ func TestPickRipeSecretsReturnsNoRipe(t *testing.T) {
 	}
 	newKV := NewKV.Data["keys"].([]interface{})
 
-	persistVaultChanges(newKV, client, config)
-	secondState := mySecretList
+	synchronizeVaultSecrets(newKV, client, config)
+	secondState := currentSecrets
 	picked := PickRipeSecrets(firstState, secondState)
 	fmt.Println(picked, len(picked))
 	if len(picked) != 0 {
@@ -472,4 +475,214 @@ func createVaultTestCluster(t *testing.T) *hashivault.TestCluster {
 	}
 
 	return cluster
+}
+
+func GenerateTestSecretsWithCustomMetadata(t *testing.T, customMetadata map[string]interface{}) *api.Secret {
+
+	secretData := map[string]interface{}{
+		"data":     map[string]interface{}{"key": "value", "many": "keys", "some": "values"},
+		"metadata": customMetadata,
+	}
+	// Create a new Secret object
+	secret := &api.Secret{
+		Data: secretData,
+	}
+
+	return secret
+}
+
+func TestGetCustomMetadataFromSecret(t *testing.T) {
+	tests := []struct {
+		name    string
+		secret  *api.Secret
+		want    map[string]interface{}
+		wantErr bool
+	}{
+		{
+			name:    "secretNil",
+			secret:  nil,
+			want:    nil,
+			wantErr: true,
+		},
+		{
+			name:    "SecretWithEmptyMetadata",
+			secret:  GenerateTestSecretsWithCustomMetadata(t, map[string]interface{}{}),
+			want:    nil,
+			wantErr: true,
+		},
+		{
+			name: "SecretWithNestedMetadata",
+			secret: GenerateTestSecretsWithCustomMetadata(t, map[string]interface{}{
+				"custom_metadata": map[string]interface{}{
+					"my_data":     "very_custom",
+					"AWS_ARN_REF": "arn:partition:service:region:account-id:resource-id,arn:partition:service:region:account-id:resource-type/resource-id,arn:partition:service:region:account-id:resource-type:resource-id",
+				},
+			}),
+			want: map[string]interface{}{
+				"my_data":     "very_custom",
+				"AWS_ARN_REF": "arn:partition:service:region:account-id:resource-id,arn:partition:service:region:account-id:resource-type/resource-id,arn:partition:service:region:account-id:resource-type:resource-id",
+			},
+			wantErr: false,
+		},
+		{
+			name: "SecretWithNonStringMetadata",
+			secret: GenerateTestSecretsWithCustomMetadata(t, map[string]interface{}{
+				"custom_metadata": map[string]interface{}{
+					"my_data": "very_custom",
+					"test":    1234,
+				},
+			}),
+			want: map[string]interface{}{
+				"my_data": "very_custom",
+				"test":    1234,
+			},
+			wantErr: false,
+		},
+		{
+			name: "SecretWithNullMetadata",
+			secret: GenerateTestSecretsWithCustomMetadata(t, map[string]interface{}{
+				"custom_metadata": map[string]interface{}{
+					"my_data": nil,
+					"test":    1234,
+				},
+			}),
+			want: map[string]interface{}{
+				"my_data": nil,
+				"test":    1234,
+			},
+			wantErr: false,
+		},
+		{
+			name: "SecretWithNtSpecific",
+			secret: GenerateTestSecretsWithCustomMetadata(t, map[string]interface{}{
+				"custom_metadata": map[string]interface{}{
+					"AWS_ARN_REF": "arn:aws:secretsmanager:eu-north-1:123456789101",
+				},
+			}),
+			want: map[string]interface{}{
+				"AWS_ARN_REF": "arn:aws:secretsmanager:eu-north-1:123456789101",
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, _ := GetCustomMetadataFromSecret(tt.secret)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("GetCustomMetadataFromSecret() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func GenerateCustomMetadataSecret(t *testing.T, client *api.Client, config config, secretName string, customInputData map[string]interface{}) *api.Secret {
+
+	custom_metadata := map[string]interface{}{
+		"custom_metadata": customInputData,
+	}
+
+	if customInputData != nil {
+		custom_metadata = customInputData
+	}
+
+	secretData := map[string]interface{}{
+		"data": map[string]interface{}{
+			"secretKey": "secretValue2",
+		},
+		"custom_metadata": custom_metadata,
+	}
+
+	writePath := fmt.Sprintf("%s/metadata/%s", config.secretEngine, secretName)
+	_, err := client.Logical().Write(writePath, secretData)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeDataPath := fmt.Sprintf("%s/data/%s", config.secretEngine, secretName)
+	_, err = client.Logical().Write(writeDataPath, secretData)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	secret, err := client.Logical().Read(writeDataPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return secret
+
+}
+
+func TestGetCustomMetadataFromVaultInstance(t *testing.T) {
+
+	cluster := createVaultTestCluster(t)
+	defer cluster.Cleanup()
+	client := cluster.Cores[0].Client
+	config := config{
+		vaultEndpoint: cluster.Cores[0].Client.Address(),
+		secretEngine:  "kv",
+		token:         client.Token(),
+		destEnv:       "kv",
+		pemFile:       "cert.pem",
+	}
+
+	GenerateCustomMetadataSecret(t, client, config, "custom_metadataSecret", nil)
+
+}
+
+func TestFindRipeAWSSecrets(t *testing.T) {
+	tests := []struct {
+		name       string
+		PreviousKV map[string]*api.Secret
+		NewKV      map[string]*api.Secret
+		expected   map[string]string
+	}{
+		{
+			name: "NoRipeSecrets",
+			PreviousKV: map[string]*api.Secret{
+				"secret1": {Data: map[string]interface{}{"metadata": map[string]interface{}{"custom_metadata": map[string]interface{}{"AWS_ARN_REF": "arn:aws:secretsmanager:region:account-id:secret:secret1"}}}},
+				"secret2": {Data: map[string]interface{}{"metadata": map[string]interface{}{"custom_metadata": map[string]interface{}{"AWS_ARN_REF": "arn:aws:secretsmanager:region:account-id:secret:secret2"}}}},
+			},
+			NewKV: map[string]*api.Secret{
+				"secret1": {Data: map[string]interface{}{"metadata": map[string]interface{}{"custom_metadata": map[string]interface{}{"AWS_ARN_REF": "arn:aws:secretsmanager:region:account-id:secret:secret1"}}}},
+				"secret2": {Data: map[string]interface{}{"metadata": map[string]interface{}{"custom_metadata": map[string]interface{}{"AWS_ARN_REF": "arn:aws:secretsmanager:region:account-id:secret:secret2"}}}},
+			},
+			expected: map[string]string{},
+		},
+		{
+			name: "OneRipeSecret",
+			PreviousKV: map[string]*api.Secret{
+				"secret1": {Data: map[string]interface{}{"metadata": map[string]interface{}{"custom_metadata": map[string]interface{}{"AWS_ARN_REF": "arn:aws:secretsmanager:region:account-id:secret:secret1"}}}},
+				"secret2": {Data: map[string]interface{}{"metadata": map[string]interface{}{"custom_metadata": map[string]interface{}{"AWS_ARN_REF": "arn:aws:secretsmanager:region:account-id:secret:secret2"}}}},
+			},
+			NewKV: map[string]*api.Secret{
+				"secret1": {Data: map[string]interface{}{"metadata": map[string]interface{}{"custom_metadata": map[string]interface{}{"AWS_ARN_REF": "arn:aws:secretsmanager:region:account-id:secret:secret1"}}}},
+				"secret2": {Data: map[string]interface{}{"metadata": map[string]interface{}{"custom_metadata": map[string]interface{}{"AWS_ARN_REF": "arn:aws:secretsmanager:region:account-id:secret:secret2-new"}}}},
+			},
+			expected: map[string]string{"secret2": "arn:aws:secretsmanager:region:account-id:secret:secret2"},
+		},
+		{
+			name: "MultipleRipeSecrets",
+			PreviousKV: map[string]*api.Secret{
+				"secret1": {Data: map[string]interface{}{"metadata": map[string]interface{}{"custom_metadata": map[string]interface{}{"AWS_ARN_REF": "arn:aws:secretsmanager:region:account-id:secret:secret1"}}}},
+				"secret2": {Data: map[string]interface{}{"metadata": map[string]interface{}{"custom_metadata": map[string]interface{}{"AWS_ARN_REF": "arn:aws:secretsmanager:region:account-id:secret:secret2"}}}},
+			},
+			NewKV: map[string]*api.Secret{
+				"secret1": {Data: map[string]interface{}{"metadata": map[string]interface{}{"custom_metadata": map[string]interface{}{"AWS_ARN_REF": "arn:aws:secretsmanager:region:account-id:secret:secret1-new"}}}},
+				"secret2": {Data: map[string]interface{}{"metadata": map[string]interface{}{"custom_metadata": map[string]interface{}{"AWS_ARN_REF": "arn:aws:secretsmanager:region:account-id:secret:secret2-new"}}}},
+			},
+			expected: map[string]string{
+				"secret1": "arn:aws:secretsmanager:region:account-id:secret:secret1",
+				"secret2": "arn:aws:secretsmanager:region:account-id:secret:secret2",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := findRipeAWSSecrets(tt.PreviousKV, tt.NewKV)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
 }

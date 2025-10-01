@@ -3,26 +3,57 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/hashicorp/vault/api"
+	log "github.com/sirupsen/logrus"
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"log/slog"
 	"os"
 	"path/filepath"
-
-	"github.com/hashicorp/vault/api"
-
-	log "github.com/sirupsen/logrus"
-	"k8s.io/api/core/v1"
-	"strings"
 )
 
+var cfgFile string
+var newConfig config
+
+var rootCmd = &cobra.Command{
+	Use:   "raven",
+	Short: "Raven is a tool for managing secrets",
+	Long:  `Raven is a CLI tool for managing secrets in Vault and synchronizing them across different environments.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		cfg := initializeConfig()
+		startRaven(cfg)
+	},
+}
+
 func init() {
-	// Log as JSON instead of the default ASCII formatter.
+	cobra.OnInitialize(initConfig)
 
 	log.SetFormatter(&log.JSONFormatter{})
-
-	// Output to stdout instead of the default stderr
-	// Can be any io.Writer, see below for File example
 	log.SetOutput(os.Stdout)
 
+	rootCmd.Flags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.raven.yaml)")
+
+	rootCmd.Flags().String("token", "", "token used for to grab secrets from Vault")
+	rootCmd.Flags().String("se", "", "specifies secret engine to grab secrets from in Vault")
+	rootCmd.Flags().String("vaultendpoint", "", "URL to the Vault installation.")
+	rootCmd.Flags().String("cert", "", "used to create sealed secrets")
+	rootCmd.Flags().String("repourl", "", "REPO url.")
+	rootCmd.Flags().String("clonepath", "", "Path in which to clone repo and used for base for appending keys.")
+	rootCmd.Flags().String("dest", "", "destination env in git repository to output SealedSecrets to.")
+	rootCmd.Flags().String("loglevel", "INFO", "loglevel")
+	rootCmd.Flags().Int("sleep", 360, "define how long Raven should sleep between each iteration")
+
+	viper.BindPFlag("token", rootCmd.Flags().Lookup("token"))
+	viper.BindPFlag("secretEngine", rootCmd.Flags().Lookup("se"))
+	viper.BindPFlag("vaultEndpoint", rootCmd.Flags().Lookup("vaultendpoint"))
+	viper.BindPFlag("pemFile", rootCmd.Flags().Lookup("cert"))
+	viper.BindPFlag("repoUrl", rootCmd.Flags().Lookup("repourl"))
+	viper.BindPFlag("clonePath", rootCmd.Flags().Lookup("clonepath"))
+	viper.BindPFlag("loglevel", rootCmd.Flags().Lookup("clonepath"))
+	viper.BindPFlag("destEnv", rootCmd.Flags().Lookup("dest"))
+	viper.BindPFlag("sleepTime", rootCmd.Flags().Lookup("sleep"))
+
+	viper.AutomaticEnv()
 	loglevel := os.Getenv("LOGLEVEL")
 
 	switch {
@@ -35,98 +66,26 @@ func init() {
 	default:
 		log.SetLevel(log.InfoLevel)
 		log.Info("No LOGLEVEL specified. Defaulting to Info")
-
 	}
-
 }
 
-/*
-/
-
-isDocumentationKey parses documentationKeys list, returns true if key exists.
-*/
-func isDocumentationKey(DocumentationKeys []string, key string) bool {
-	for _, DocumentationKey := range DocumentationKeys {
-		if DocumentationKey == key {
-			log.WithFields(log.Fields{"key": key, "DocumentationKeys": DocumentationKeys}).Debug("IsdocumentationKey found key")
-			return true
+func initConfig() {
+	if cfgFile != "" {
+		viper.SetConfigFile(cfgFile)
+	} else {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			fmt.Println(err)
 		}
-	}
-	return false
-}
-
-/*
-initAdditionalKeys looks for DOCUMENTATION_KEYS in order to enrich secret object with annotation down the line.
-*/
-
-func initAdditionalKeys() (DocumentationKeys []string) {
-	keys := os.Getenv("DOCUMENTATION_KEYS")
-	DocumentationKeys = strings.Split(keys, ",")
-
-	if !isDocumentationKey(DocumentationKeys, "raven/description") {
-		DocumentationKeys = append(DocumentationKeys, "raven/description")
-		log.WithFields(log.Fields{"DocumentationKeys": DocumentationKeys}).Info("No documentation_KEYS found, setting raven/description")
-
+		viper.AddConfigPath(home)
+		viper.SetConfigType("yaml")
+		viper.SetConfigName(".raven")
 	}
 
-	return
+	viper.ReadInConfig()
 }
 
-/*
-   We assume program crashed and we need to tell Kubernetes this:
-   https://kubernetes.io/docs/tasks/debug-application-cluster/determine-reason-pod-failure/
-*/
-
-func WriteErrorToTerminationLog(errormsg string) {
-	file, err := os.Create("/dev/termination-log")
-	if err != nil {
-		log.WithFields(log.Fields{"error": err.Error()}).Fatal("WriteErrorToTerminationLog failed")
-
-	}
-	defer file.Close()
-
-	_, err = file.WriteString(errormsg)
-	if err != nil {
-		log.WithFields(log.Fields{"error": err.Error()}).Fatal("writeString errormsg failed")
-
-	}
-	os.Exit(1)
-}
-
-/*
-scaffolding for k8s,
-createK8sSecret generates k8s secrets based on inputs:
-- name: name of secret
-- Namespace: k8s namespace
-- datafield: data for secret
-returns v1.Secret for consumption by SealedSecret
-*/
-
-func createK8sSecret(name string, config config, dataFields *api.Secret) (secret v1.Secret) {
-	Annotations := applyAnnotations(dataFields, config)
-	data, stringdata := applyDatafieldsTok8sSecret(dataFields, Annotations, name)
-	Annotations = applyMetadata(dataFields, Annotations)
-	ravenLabels := applyRavenLabels()
-
-	SecretContent := SecretContents{stringdata: stringdata, data: data, Annotations: Annotations, name: name, Labels: ravenLabels}
-	secret = NewSecretWithContents(SecretContent, config)
-	log.WithFields(log.Fields{"typeMeta": secret.TypeMeta, "objectMeta": secret.ObjectMeta, "data": data, "stringData": stringdata, "secret": secret}).Debug("createK8sSecret: made k8s secret object")
-	return
-
-}
-
-var newConfig = config{
-	vaultEndpoint:     "",
-	secretEngine:      "",
-	token:             "",
-	destEnv:           "",
-	pemFile:           "",
-	clonePath:         "",
-	repoUrl:           "",
-	DocumentationKeys: initAdditionalKeys(),
-}
-
-func main() {
+func initializeConfig() *config {
 	token := flag.String("token", os.Getenv("VAULT_TOKEN"), "token used for to grab secrets from Vault")
 	secretEngine := flag.String("se", os.Getenv("SECRET_ENGINE"), "specifies secret engine to grab secrets from in Vault")
 	vaultEndpoint := flag.String("vaultendpoint", os.Getenv("VAULTENDPOINT"), "URL to the Vault installation.")
@@ -135,6 +94,8 @@ func main() {
 	clonePath := flag.String("clonepath", os.Getenv("CLONE_PATH"), "Path in which to clone repo and used for base for appending keys.")
 	destEnv := flag.String("dest", os.Getenv("DEST_ENV"), "destination env in git repository to output SealedSecrets to.")
 	sleepTime := flag.Int("sleep", getIntEnv("SLEEP_TIME", 360), "define how long Raven should sleep between each iteration")
+	awsWriteBack := flag.Bool("awsWriteBack", getBoolEnv("AWS_WRITEBACK", false), "enable AWS writeback")
+
 	flag.Parse()
 
 	visited := true
@@ -154,13 +115,23 @@ func main() {
 		newConfig.clonePath = *clonePath
 		newConfig.repoUrl = *repoUrl
 		newConfig.DocumentationKeys = initAdditionalKeys() // we make sure that if the env here is set we can allow multiple descriptional fields in annotations.
-
+		newConfig.sleepTime = *sleepTime
 		kubernetesMonitor := os.Getenv("KUBERNETESMONITOR")
-		kubernetesRemove := os.Getenv("KUBERNETESREMOVE")
+		kubernetesDelete := os.Getenv("KUBERNETESREMOVE")
 		kubernetesDoRollout := os.Getenv("KUBERNETES_ROLLOUT")
 
-		if kubernetesMonitor == "true" || kubernetesRemove == "true" {
+		if kubernetesMonitor == "true" || kubernetesDelete == "true" {
 			newConfig.Clientset = NewKubernetesClient()
+		}
+		if *awsWriteBack == true {
+			newConfig.awsWriteback = true
+			newConfig.awsAccessKeyId = os.Getenv("AWS_ACCESS_KEY_ID")
+			newConfig.awsSecretAccessKey = os.Getenv("AWS_SECRET_ACCESS_KEY")
+			newConfig.awsRegion = os.Getenv("AWS_REGION")
+			newConfig.awsSecretPrefix = os.Getenv("AWS_SECRET_PREFIX")
+			newConfig.awsNotificationUrl = os.Getenv("AWS_NOTIFICATION_WEBHOOK_URL")
+			newConfig.awsRole = os.Getenv("AWS_ROLE_NAME")
+			jsonLogger.Info("AWS writeback enabled", "region", newConfig.awsRegion, "secretprefix", newConfig.awsSecretPrefix, "role", newConfig.awsRole)
 		}
 
 		if kubernetesDoRollout == "true" {
@@ -174,56 +145,73 @@ func main() {
 				w.Logger.Info("ServiceAccount does not have permissions to watch namespace, exiting go routine")
 			}
 		}
+		return &newConfig
+	}
+	return nil
+}
 
-		log.WithFields(log.Fields{"config": newConfig}).Debug("Setting newConfig variables. preparing to run. ")
-		client, err := client()
+func main() {
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+}
+func startRaven(RavenCfg *config) {
+	if RavenCfg == nil {
+		return
+	}
+
+	jsonLogger.Debug("Setting newConfig variables", "config", newConfig)
+	vaultClient, err := client()
+	if err != nil {
+		jsonLogger.Error("Failed to initialize vaultClient", "config", newConfig)
+		WriteErrorToTerminationLog("Failed to initialize vaultClient")
+	}
+
+	if !validToken(vaultClient) {
+		jsonLogger.Warn("Token is invalid, need to update", "token", RavenCfg.token)
+		WriteErrorToTerminationLog("[*] token is invalid, someone needs to update this![*]")
+		return
+	}
+
+	go handleRequests(newConfig)
+	newpath := filepath.Join(RavenCfg.clonePath, RavenCfg.secretEngine)
+	if err := os.MkdirAll(newpath, os.ModePerm); err != nil {
+		jsonLogger.Error("Failed to ensure paths for first time", "NewPath", newpath)
+		WriteErrorToTerminationLog("os.Mkdir failed when trying to ensure paths for first time")
+	}
+
+	GitClone(newConfig)
+	State := map[string]*api.Secret{}
+
+	for {
+		if !validToken(vaultClient) {
+			continue
+		}
+		jsonLogger.Debug("Validated Token: grabbing list of secrets")
+		list, err := getAllKVs(vaultClient, newConfig)
 		if err != nil {
-			log.WithFields(log.Fields{"config": newConfig}).Fatal("failed to initialize client")
-
+			jsonLogger.Error("getAllKVs list error", "error", err)
+			continue
 		}
 
-		if validToken(client) {
-			// start webserver
-			go handleRequests(newConfig)
-			//ensure paths for first time.
-			newpath := filepath.Join(*clonePath, *secretEngine)
-			err := os.MkdirAll(newpath, os.ModePerm)
-			if err != nil {
-				log.WithFields(log.Fields{"NewPath": newpath}).Error("os.Mkdir failed when trying to ensure paths for first time")
-				WriteErrorToTerminationLog("os.Mkdir failed when trying to ensure paths for first time")
-			}
-
-			GitClone(newConfig)
-			State := map[string]*api.Secret{}
-			if err != nil {
-				log.WithFields(log.Fields{"error": err}).Error("client not initialized")
-			}
-			for {
-				if validToken(client) {
-					log.WithFields(log.Fields{}).Debug("Validated Token: grabbing list of secrets")
-					var list, err = getAllKVs(client, newConfig)
-					if err != nil {
-						log.WithFields(log.Fields{"error": err}).Error("getAllKVs list error")
-					}
-					if list == nil {
-						cleanDeadEntries()
-					} else {
-						mySecretList = map[string]*api.Secret{}
-						secretList := list.Data["keys"].([]interface{})
-						persistVaultChanges(secretList, client, newConfig)
-						//..and push new files if there were any. If there are any ripe secrets, delete.,
-						PickedRipeSecrets := PickRipeSecrets(State, mySecretList)
-						HarvestRipeSecrets(PickedRipeSecrets, newConfig)
-						gitPush(newConfig)
-						log.WithFields(log.Fields{"PickedRipeSecrets": PickedRipeSecrets}).Debug("PickedRipeSecrets list")
-						State = mySecretList
-						sleep(*sleepTime)
-					}
-				}
-			}
-		} else {
-			log.WithFields(log.Fields{"token": token}).Warn("Token is invalid, need to update. ")
-			WriteErrorToTerminationLog("[*] token is invalid, someone needs to update this![*]")
+		if list == nil {
+			cleanDeadEntries()
+			continue
 		}
+
+		currentSecrets = map[string]*api.Secret{}
+		secretList := list.Data["keys"].([]interface{})
+		synchronizeVaultSecrets(secretList, vaultClient, newConfig)
+		PickedRipeSecrets := PickRipeSecrets(State, currentSecrets)
+		ripeAwsSecrets := findRipeAWSSecrets(State, currentSecrets)
+		WriteMissingAWSSecrets(currentSecrets, newConfig)
+		HarvestRipeSecrets(PickedRipeSecrets, newConfig)
+		HarvestRipeAwsSecrets(ripeAwsSecrets, newConfig)
+		gitPush(newConfig)
+		jsonLogger.Debug("PickedRipeSecrets list", "PickedRipeSecrets", PickedRipeSecrets, "ripeAwsSecrets", ripeAwsSecrets)
+
+		State = currentSecrets
+		sleep(RavenCfg.sleepTime)
 	}
 }

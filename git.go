@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"github.com/go-git/go-git/v5/plumbing"
 	"io/fs"
 	"io/ioutil"
 	"net"
@@ -10,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/go-git/go-git/v5/plumbing"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
@@ -23,25 +24,26 @@ func logHarvestDone(repo *git.Repository, commit plumbing.Hash) {
 	obj, err := repo.CommitObject(commit)
 
 	if err != nil {
-		log.WithFields(log.Fields{"obj": obj}).Error("git show -s")
+		jsonLogger.Error("git show -s", "obj", obj)
 	}
-	log.WithFields(log.Fields{"commitMessage": obj.Message, "When": obj.Committer.When, "action": "delete"}).Info("Harvest of ripe secrets complete")
+	jsonLogger.Info("Harvest of ripe secrets complete", "commitMessage", obj.Message, "When", obj.Committer.When, "action", "delete")
 }
 
 func loadSSHKey() (sshKey []byte) {
 	sshKeyPath := os.Getenv("SSHKEYPATH")
 
 	if sshKeyPath == "" {
-		sshKey, err := ioutil.ReadFile("/secret/sshKey")
+		sshKey, err := os.ReadFile("/secret/sshKey")
 		if err != nil {
-			log.WithFields(log.Fields{"err": err}).Fatal("setSSHConfig: unable to read private key ")
+			jsonLogger.Error("setSSHConfig: unable to read private key", "err", err)
 		}
 		return sshKey
 
 	} else {
-		sshKey, err := ioutil.ReadFile(sshKeyPath)
+		sshKey, err := os.ReadFile(sshKeyPath)
+		fmt.Println()
 		if err != nil {
-			log.WithFields(log.Fields{"err": err}).Fatal("setSSHConfig: unable to read private key ")
+			jsonLogger.Error("setSSHConfig: unable to read private key", "err", err)
 		}
 		return sshKey
 
@@ -51,7 +53,7 @@ func loadSSHKey() (sshKey []byte) {
 func setSigner(sshKey []byte) (signer ssh.Signer) {
 	signer, err := ssh.ParsePrivateKey(sshKey)
 	if err != nil {
-		log.WithFields(log.Fields{"err": err}).Fatal("setSSHConfig: ParsePrivateKey err")
+		jsonLogger.Error("setSSHConfig: ParsePrivateKey err", "err", err)
 		WriteErrorToTerminationLog("setSSHConfig: unable to read private key")
 	}
 	return signer
@@ -60,13 +62,13 @@ func setSigner(sshKey []byte) (signer ssh.Signer) {
 func addtoWorktree(item string, worktree *git.Worktree) {
 	_, err := worktree.Add(item)
 	if err != nil {
-		log.WithFields(log.Fields{"error": err}).Error("Raven gitPush:worktree add error")
+		jsonLogger.Error("Raven gitPush:worktree add error", "error", err)
 	}
 	status, err := getGitStatus(worktree)
 
 	for k, _ := range status {
 		secretNameLog = append(secretNameLog, parseGitStatusFileName(k))
-		log.WithFields(log.Fields{"action": "request.git.operation.add", "secret": secretNameLog}).Info("Raven added secret to git worktree")
+		jsonLogger.Info("Raven added secret to git worktree", "action", "request.git.operation.add", "secret", secretNameLog)
 	}
 
 }
@@ -94,37 +96,35 @@ func gitPush(config config) {
 
 	worktree := initializeWorkTree(repo)
 
-	// Pull the latest changes from the origin remote and merge into the current branch
 	log.Debug("GitPush pulling")
 	setPullOptions(config, worktree)
 
 	status, err := getGitStatus(worktree)
 	if err != nil {
-		log.WithFields(log.Fields{"status": status}).Error("getGitStatus error")
+		jsonLogger.Error("getGitStatus error", "status", status)
 	}
-	if !status.IsClean() {
-		log.WithFields(log.Fields{"isClean": status.IsClean()}).Debug("gitPush found that status is not clean, making commit with changes")
-		addtoWorktree(".", worktree)
+	if status != nil {
+		if !status.IsClean() {
+			jsonLogger.Debug("gitPush found that status is not clean, making commit with changes", "isClean", status.IsClean())
+			addtoWorktree(".", worktree)
 
-		// We can verify the current status of the worktree using the method Status.
-		commitMessage := fmt.Sprintf("Raven updated secret from secret engine: %s and set namespace: %s\n", config.secretEngine, config.destEnv)
-		commit, err := makeCommit(worktree, commitMessage)
-		if err != nil {
-			log.WithFields(log.Fields{"error": err}).Error("GitPush Worktree commit error")
+			commitMessage := fmt.Sprintf("Raven updated secret from secret engine: %s and set namespace: %s\n", config.secretEngine, config.destEnv)
+			commit, err := makeCommit(worktree, commitMessage)
+			if err != nil {
+				jsonLogger.Error("GitPush Worktree commit error", "error", err)
+			}
+
+			setPushOptions(config, repo, commit)
+
+			obj, err := repo.CommitObject(commit)
+			if err != nil {
+				jsonLogger.Error("git show -s", "obj", obj)
+			}
+			jsonLogger.Info("Raven updated files in git", "commitMessage", obj.Message, "When", obj.Committer.When, "action", "request.git.operation.pushed", "secret", secretNameLog)
+			genericPostWebHook()
+			go monitorMessages(secretNameLog)
+			secretNameLog = []string{}
 		}
-
-		// we need to set creds here if its a ssh connection.
-		setPushOptions(config, repo, commit)
-
-		// Prints the current HEAD to verify that all worked well.
-		obj, err := repo.CommitObject(commit)
-		if err != nil {
-			log.WithFields(log.Fields{"obj": obj}).Error("git show -s")
-		}
-		log.WithFields(log.Fields{"commitMessage": obj.Message, "When": obj.Committer.When, "action": "request.git.operation.pushed", "secret": secretNameLog}).Info("Raven updated files in git")
-		genericPostWebHook()
-		go monitorMessages(secretNameLog)
-		secretNameLog = []string{}
 	}
 
 }
@@ -132,7 +132,7 @@ func gitPush(config config) {
 func InitializeGitRepo(config config) (r *git.Repository) {
 	r, err := git.PlainOpen(config.clonePath)
 	if err != nil {
-		log.WithFields(log.Fields{"err": err}).Info("HarvestRipeSecrets plainopen failed")
+		jsonLogger.Info("HarvestRipeSecrets plainopen failed", "err", err)
 	}
 	return r
 }
@@ -140,7 +140,7 @@ func InitializeGitRepo(config config) (r *git.Repository) {
 func initializeWorkTree(r *git.Repository) (w *git.Worktree) {
 	w, err := r.Worktree()
 	if err != nil {
-		log.WithFields(log.Fields{"err": err}).Error("HarvestRipeSecrets worktree failed")
+		jsonLogger.Error("HarvestRipeSecrets worktree failed", "err", err)
 	}
 	return
 }
@@ -148,9 +148,7 @@ func initializeWorkTree(r *git.Repository) (w *git.Worktree) {
 func getGitStatus(worktree *git.Worktree) (status git.Status, err error) {
 	status, err = worktree.Status()
 	if err != nil {
-		log.WithFields(log.Fields{
-			"err": err,
-		}).Error("HarvestRipeSecret Worktree status failed")
+		jsonLogger.Error("HarvestRipeSecret Worktree status failed", "err", err)
 	}
 	return status, err
 
@@ -160,7 +158,7 @@ func makeCommit(worktree *git.Worktree, commitMessage string) (commit plumbing.H
 	status, _ := worktree.Status()
 	for k, _ := range status {
 		secretName := parseGitStatusFileName(k)
-		log.WithFields(log.Fields{"action": "request.git.operation.commit", "secret": secretName}).Info("Raven Making Commit")
+		jsonLogger.Info("Raven Making Commit", "action", "request.git.operation.commit", "secret", secretName)
 
 	}
 	commit, err = worktree.Commit(fmt.Sprintf("%s", commitMessage), &git.CommitOptions{
@@ -176,37 +174,37 @@ func setSSHPushOptions(newconfig config, remote *git.Repository) {
 
 	err := remote.Push(&git.PushOptions{Auth: setSSHConfig()})
 	if err != nil {
-		log.WithFields(log.Fields{"error": err}).Debug("Raven gitPush error")
+		jsonLogger.Debug("Raven gitPush error", "error", err)
 	}
-	log.WithFields(log.Fields{"action": "request.git.operation.pushedRemote"}).Info("Raven updated files in git")
+	jsonLogger.Info("Raven updated files in git", "action", "request.git.operation.pushedRemote")
 
 }
 func setHTTPSPushOptions(repository *git.Repository, commit plumbing.Hash) {
 	err := repository.Push(&git.PushOptions{})
 	if err != nil {
-		log.WithFields(log.Fields{"error": err}).Error("Raven gitPush error")
+		jsonLogger.Error("Raven gitPush error", "error", err)
 	}
 	// Prints the current HEAD to verify that all worked well.
 	obj, err := repository.CommitObject(commit)
 
 	if err != nil {
-		log.WithFields(log.Fields{"obj": obj}).Error("git show -s")
+		jsonLogger.Error("git show -s", "obj", obj)
 	}
-	log.WithFields(log.Fields{"action": "request.git.operation.pushedRemote", "obj": obj}).Info("Raven updated files in git")
+	jsonLogger.Info("Raven updated files in git", "action", "request.git.operation.pushedRemote", "obj", obj)
 	genericPostWebHook()
 }
 
 func setHTTPSPullOptions(worktree *git.Worktree) {
 	err := worktree.Pull(&git.PullOptions{RemoteName: "origin"})
 	if err != nil {
-		log.WithFields(log.Fields{"error": err}).Debug("Raven gitPush:Pull error")
+		jsonLogger.Debug("Raven gitPush:Pull error", "error", err)
 	}
 }
 
 func setSSHPullOptions(worktree *git.Worktree) {
 	err := worktree.Pull(&git.PullOptions{RemoteName: "origin", Auth: setSSHConfig()})
 	if err != nil {
-		log.WithFields(log.Fields{"error": err}).Debug("Raven gitPush:Pull error")
+		jsonLogger.Debug("Raven gitPush:Pull error", "error", err)
 	}
 
 }
@@ -254,7 +252,7 @@ func setCloneOptions(config config) (cloneOptions *git.CloneOptions) {
 		//we set up config for ssh with keys. we expect ssh://somehost/some/repo.git
 		cloneOptions = setSSHCloneOptions(config)
 	} else {
-		log.WithFields(log.Fields{"config.RepoUrl": config.repoUrl}).Fatalf("Raven could not determine clone options")
+		jsonLogger.Error("Raven could not determine clone options", "config.RepoUrl", config.repoUrl)
 		WriteErrorToTerminationLog(fmt.Sprintf("Raven could not determine clone options(%s)", config.repoUrl))
 	}
 	return cloneOptions
@@ -263,14 +261,14 @@ func setCloneOptions(config config) (cloneOptions *git.CloneOptions) {
 func plainClone(config config, options *git.CloneOptions) {
 	remote, err := git.PlainClone(config.clonePath, false, options)
 	if err != nil {
-		log.WithFields(log.Fields{"error": err}).Debug("Raven GitClone error")
+		jsonLogger.Debug("Raven GitClone error", "error", err)
 	} else {
 		head, err := remote.Head()
 		if err != nil {
-			log.WithFields(log.Fields{"head": head, "error": err}).Warn("Gitclone Remote.head()")
+			jsonLogger.Warn("Gitclone Remote.head()", "head", head, "error", err)
 		}
 	}
-	log.WithFields(log.Fields{"repo": config.repoUrl}).Info("Raven successfully cloned repository")
+	jsonLogger.Info("Raven successfully cloned repository", "repo", config.repoUrl)
 
 }
 
@@ -278,7 +276,7 @@ func getBaseListOfFiles() ([]fs.FileInfo, error) {
 	base := filepath.Join(newConfig.clonePath, "declarative", newConfig.destEnv, "sealedsecrets")
 	files, err := ioutil.ReadDir(base)
 	if err != nil {
-		log.WithFields(log.Fields{"error": err}).Error("ioutil.ReadDir() error")
+		jsonLogger.Error("ioutil.ReadDir() error", "error", err)
 	}
 	return files, err
 }
@@ -286,7 +284,7 @@ func getBaseListOfFiles() ([]fs.FileInfo, error) {
 func removeFileFromWorktree(path string, worktree *git.Worktree) {
 	_, err := worktree.Remove(path)
 	if err != nil {
-		log.WithFields(log.Fields{"err": err}).Error("removeFromWorktree remove failed")
+		jsonLogger.Error("removeFromWorktree remove failed", "err", err)
 	}
 }
 
@@ -294,13 +292,13 @@ func removeFilesFromWorkTree(files []fs.FileInfo, worktree *git.Worktree) *git.W
 	for _, f := range files {
 		absolutePath := makeAbsolutePath(newConfig, f)
 		removeFileFromWorktree(absolutePath, worktree)
-		log.WithFields(log.Fields{"absolutePath": absolutePath, "ripeSecret": f.Name(), "action": "delete"}).Info("HarvestRipeSecrets found ripe secret. marked for deletion")
+		jsonLogger.Info("HarvestRipeSecrets found ripe secret. marked for deletion", "absolutePath", absolutePath, "ripeSecret", f.Name(), "action", "delete")
 	}
 	return worktree
 }
 
 func cleanDeadEntries() {
-	log.Info("list is nil. We should check if we have a directory full of files that should be deleted from git.")
+	jsonLogger.Info("list is nil. We should check if we have a directory full of files that should be deleted from git.")
 	repository := InitializeGitRepo(newConfig)
 	worktree := initializeWorkTree(repository)
 	files, _ := getBaseListOfFiles()
@@ -311,12 +309,12 @@ func cleanDeadEntries() {
 
 		if !status.IsClean() {
 
-			log.WithFields(log.Fields{"worktree": worktree, "status": status}).Debug("HarvestRipeSecret !status.IsClean() ")
+			jsonLogger.Debug("HarvestRipeSecret !status.IsClean()", "worktree", worktree, "status", status)
 
 			commit, _ := makeCommit(worktree, "Raven Removed ripe secret(s) from git")
 			setPushOptions(newConfig, repository, commit)
 		}
 	}
-	log.Info("Going to sleep now.")
+	jsonLogger.Info("Going to sleep now.")
 	time.Sleep(30 * time.Second)
 }

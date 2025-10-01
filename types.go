@@ -6,20 +6,28 @@ import (
 )
 
 type config struct {
-	vaultEndpoint     string
-	secretEngine      string
-	token             string
-	destEnv           string
-	pemFile           string
-	clonePath         string
-	repoUrl           string
-	DocumentationKeys []string
-	Clientset         kubernetes.Interface
+	vaultEndpoint      string
+	secretEngine       string
+	token              string
+	destEnv            string
+	pemFile            string
+	clonePath          string
+	repoUrl            string
+	DocumentationKeys  []string
+	Clientset          kubernetes.Interface
+	awsRegion          string
+	awsAccessKeyId     string
+	awsSecretAccessKey string
+	sleepTime          int
+	awsSecretPrefix    string
+	awsNotificationUrl string
+	awsRole            string
+	awsWriteback       bool
 }
 
 var secretNameLog []string
 
-var mySecretList = map[string]*api.Secret{}
+var currentSecrets = map[string]*api.Secret{}
 
 type SecretContents struct {
 	stringdata  map[string]string

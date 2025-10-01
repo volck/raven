@@ -4,15 +4,16 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
-	"io/ioutil"
+	"log/slog"
+	"os"
+
+	"reflect"
 
 	sealedSecretPkg "github.com/bitnami-labs/sealed-secrets/pkg/apis/sealed-secrets/v1alpha1"
 	"github.com/hashicorp/vault/api"
-	log "github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v2"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
-	"reflect"
 )
 
 /*
@@ -23,36 +24,44 @@ import (
 func readSealedSecretAndCompareWithVaultStruct(secret string, kv *api.Secret, filepointer string, secretEngine string) (NeedUpdate bool) {
 	NeedUpdate = false
 	VaultTimeStamp := kv.Data["metadata"].(map[string]interface{})["created_time"]
-
-	//grab SealedSecret file
-	data, err := ioutil.ReadFile(filepointer)
+	theArnFromVault, err := ExtractCustomKeyFromCustomMetadata("AWS_ARN_REF", kv)
 	if err != nil {
-		log.WithFields(log.Fields{"filepointer": filepointer, "error": err.Error()}).Error("readSealedSecretAndCompareWithVaultStruct.ioutil.ReadFile")
-		WriteErrorToTerminationLog(err.Error())
-
+		jsonLogger.Debug("readSealedSecretAndCompareWithVaultStruct.ExtractCustomKeyFromCustomMetadata", "error", err)
+	}
+	//grab SealedSecret file
+	data, err := os.ReadFile(filepointer)
+	if err != nil {
+		jsonLogger.Info("readSealedSecretAndCompareWithVaultStruct.ioutil.ReadFile Marking for update", slog.Any("error", err), slog.Any("filepointer", filepointer))
+		return true
+		//WriteErrorToTerminationLog(err.Error())
 	}
 	//unmarshal it into a interface
 	v := make(map[string]interface{})
 	err = yaml.Unmarshal(data, &v)
 	if err != nil {
-		log.WithFields(log.Fields{"data": data, "v": v, "error": err.Error()}).Fatal("readSealedSecretAndCompareWithVaultStruct.YAML.Unmarshal")
-
-		WriteErrorToTerminationLog(err.Error())
+		jsonLogger.Info("readSealedSecretAndCompareWithVaultStruct.YAML.Unmarshal error. Marking for update", slog.Any("error", err), slog.Any("data", data), slog.Any("v", v))
+		return true
 	}
 	// hacky way of getting variable
 	if _, ok := v["metadata"]; ok {
 		if !ok {
-			log.WithFields(log.Fields{"ok-status": ok, "action": "update"}).Info("readSealedSecretAndCompareWithVaultStruct: we need a update here")
+			jsonLogger.Info("readSealedSecretAndCompareWithVaultStruct: we need a update here", slog.Any("ok-status", ok), slog.String("action", "update"))
 			NeedUpdate = true
 		}
 		SealedSecretTime := v["metadata"].(map[interface{}]interface{})["annotations"].(map[interface{}]interface{})["created_time"]
+		SealedSecretARNRef := v["metadata"].(map[interface{}]interface{})["annotations"].(map[interface{}]interface{})["AWS_ARN_REF"]
+
+		if SealedSecretARNRef != theArnFromVault {
+			jsonLogger.Info("readSealedSecretAndCompareWithVaultStruct: we need a update here", slog.String("action", "update"), slog.Any("SealedSecretARNRef", SealedSecretARNRef), slog.Any("theArnFromVault", theArnFromVault))
+			NeedUpdate = true
+		}
 		SealedSecretSource := v["metadata"].(map[interface{}]interface{})["annotations"].(map[interface{}]interface{})["source"]
-		if VaultTimeStamp == SealedSecretTime || SealedSecretSource != secretEngine {
-			log.WithFields(log.Fields{"VaultTimeStamp": VaultTimeStamp, "SealedSecretTime": SealedSecretTime, "SealedSecretSource": SealedSecretSource, "secretEngine": secretEngine, "action": "update"}).Debug("readSealedSecretAndCompareWithVaultStruct either we have a match here, or secret is from another secretengine")
+		if (VaultTimeStamp == SealedSecretTime) || (SealedSecretSource != secretEngine) {
+			jsonLogger.Debug("readSealedSecretAndCompareWithVaultStruct either we have a match here, or secret is from another secretengine", slog.Any("VaultTimeStamp", VaultTimeStamp), slog.Any("SealedSecretTime", SealedSecretTime), slog.Any("SealedSecretSource", SealedSecretSource), slog.String("action", "update"))
 			return
 		} else {
 			NeedUpdate = true
-			log.WithFields(log.Fields{"secret": secret, "vaultTimestamp": VaultTimeStamp, "SealedSecretTime": SealedSecretTime, "action": "update"}).Info("readSealedSecretAndCompareWithVaultStruct needUpdate")
+			jsonLogger.Info("readSealedSecretAndCompareWithVaultStruct needUpdate", slog.String("action", "update"), slog.Any("VaultTimeStamp", VaultTimeStamp), slog.Any("SealedSecretTime", SealedSecretTime))
 		}
 	}
 	return
@@ -62,32 +71,31 @@ func readSealedSecretAndCompareWithVaultStruct(secret string, kv *api.Secret, fi
 createSealedSecret takes two arguments:
 publicKeyPath: path to PEM file.
 k8ssecret: kubernetes secret generated from createK8sSecret when iterating list of secrets.
-
 */
 func createSealedSecret(publickeyPath string, k8ssecret *v1.Secret) (sealedSecret *sealedSecretPkg.SealedSecret) {
-	read, err := ioutil.ReadFile(publickeyPath)
+	read, err := os.ReadFile(publickeyPath)
 	if err != nil {
-		log.WithFields(log.Fields{"publickeyPath": publickeyPath, "error": err}).Fatal("createSealedSecret.ioutil.ReadFile: Cannot read publickeyPath")
+		jsonLogger.Error("createSealedSecret.ioutil.ReadFile: Cannot read publickeyPath", slog.Any("error", err), slog.String("publickeyPath", publickeyPath))
+		WriteErrorToTerminationLog("Cannot read publickeyPath: " + err.Error())
 	}
-	block, _ := pem.Decode([]byte(read))
+	block, _ := pem.Decode(read)
 	if block == nil {
-		log.WithFields(log.Fields{
-			"pemDecode": publickeyPath,
-		}).Fatal("createSealedSecret.Pem.Decode() failed to parse PEM block containing the public key")
+		jsonLogger.Error("createSealedSecret.Pem.Decode() failed to parse PEM block containing the public key",
+			"pemDecode", publickeyPath)
 		WriteErrorToTerminationLog("failed to parse PEM block containing the public key")
 	}
 	var pub *x509.Certificate
 
 	pub, err = x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		log.WithFields(log.Fields{"block.Bytes": block.Bytes, "error": err.Error()}).Fatal("createSealedSecret.Pem.Decode() failed to parse DER encoded public key: ")
+		jsonLogger.Error("createSealedSecret.Pem.Decode() failed to parse DER encoded public key", "error", err, "block.Bytes", block.Bytes)
 		WriteErrorToTerminationLog("failed to parse DER encoded public key: " + err.Error())
 	}
 	var codecs serializer.CodecFactory
 	rsaPublicKey, _ := pub.PublicKey.(*rsa.PublicKey)
 	sealedSecret, err = sealedSecretPkg.NewSealedSecret(codecs, rsaPublicKey, k8ssecret)
 	if err != nil {
-		log.WithFields(log.Fields{"sealedSecret": sealedSecret, "error": err.Error()}).Error("createSealedSecret.sealedSecretPkg.NewSealedSecret")
+		jsonLogger.Error("createSealedSecret.sealedSecretPkg.NewSealedSecret", "error", err, slog.Any("sealedSecret", sealedSecret))
 		WriteErrorToTerminationLog("failed to parse DER encoded public key: " + err.Error())
 	}
 	// apparently we need to specifically assign these fields.
@@ -99,7 +107,7 @@ func createSealedSecret(publickeyPath string, k8ssecret *v1.Secret) (sealedSecre
 func firstRun(PreviousKV map[string]*api.Secret, NewKV map[string]*api.Secret) bool {
 	validator := false
 	if PreviousKV == nil || NewKV == nil {
-		log.WithFields(log.Fields{"previousKeys": PreviousKV, "newKV": NewKV}).Debug("PickRipeSecrets compared lists and found that either of the lists were nil")
+		jsonLogger.Debug("PickRipeSecrets compared lists and found that either of the lists were nil", slog.Any("previousKeys", PreviousKV), slog.Any("newKV", NewKV))
 		validator = true
 	}
 	return validator
@@ -116,7 +124,7 @@ func listsEmpty(PreviousKV map[string]*api.Secret, NewKV map[string]*api.Secret)
 func listsMatch(PreviousKV map[string]*api.Secret, NewKV map[string]*api.Secret) bool {
 	validator := false
 	if reflect.DeepEqual(PreviousKV, NewKV) {
-		log.WithFields(log.Fields{"previousKeys": PreviousKV, "newKV": NewKV}).Debug("PickRipeSecrets: Lists match.")
+		jsonLogger.Debug("PickRipeSecrets: Lists match.", "previousKeys", PreviousKV, "newKV", NewKV)
 		validator = true
 	}
 	return validator
@@ -124,13 +132,13 @@ func listsMatch(PreviousKV map[string]*api.Secret, NewKV map[string]*api.Secret)
 
 func findRipeSecrets(PreviousKV map[string]*api.Secret, NewKV map[string]*api.Secret) (RipeSecrets []string) {
 	for k, _ := range PreviousKV {
-//		containsString := SliceContainsString(NewKV.Data["keys"].([]interface{}), v.(string))
+		//		containsString := SliceContainsString(NewKV.Data["keys"].([]interface{}), v.(string))
 		containsString := KeyInDictionary(NewKV, k)
 		if !containsString {
-			log.WithFields(log.Fields{"PreviousKV": PreviousKV, "action": "delete"}).Debug("PickRipeSecrets: We have found a ripe secret. adding it to list of ripesecrets now.")
-			log.WithFields(log.Fields{"RipeSecret": k, "action": "delete"}).Info("PickRipeSecrets: We have found a ripe secret. adding it to list of ripesecrets now.")
+			jsonLogger.Info("PickRipeSecrets: We have found a ripe secret. adding it to list of ripesecrets now.", "RipeSecret", k, "action", "delete")
 			RipeSecrets = append(RipeSecrets, k)
-			log.WithFields(log.Fields{"RipeSecret": RipeSecrets}).Debug("PickRipeSecrets final list of ripe secrets")
+			jsonLogger.Debug("PickRipeSecrets final list of ripe secrets", "RipeSecret", RipeSecrets)
+			RipeSecrets = append(RipeSecrets, k)
 		}
 	}
 	return RipeSecrets
