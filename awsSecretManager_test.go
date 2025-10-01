@@ -1,3 +1,6 @@
+//go:build aws_integration
+// +build aws_integration
+
 package main
 
 import (
@@ -19,9 +22,23 @@ func TestExtractCustomKeyFromCustomMetadata(t *testing.T) {
 			"AWS_ARN_REF": "arn:aws:secretsmanager:eu-north-1:123456789012:secret:qa01/test/demo-qHkXhm",
 		}}
 
+	noSyncCustomMetaData := map[string]interface{}{
+		"custom_metadata": map[string]interface{}{
+			"AWS_ARN_REF": "arn:aws:secretsmanager:eu-north-1:123456789012:secret:qa01/test/demo-qHkXhm",
+			"NO_SYNC":     "true",
+		}}
+
+	onPremEnvPrefix := map[string]interface{}{
+		"custom_metadata": map[string]interface{}{
+			"AWS_ARN_REF":                       "arn:aws:secretsmanager:eu-north-1:123456789012:secret:qa01/test/demo-qHkXhm",
+			"ENABLE_ON_PREM_ENVIRONMENT_PREFIX": "true",
+		}}
+
 	// Generate the test secret with the custom metadata
 	testSecret := GenerateTestSecretsWithCustomMetadata(t, customMetadata)
+	noSyncSecret := GenerateTestSecretsWithCustomMetadata(t, noSyncCustomMetaData)
 	FQDNSecret := GenerateTestSecretsWithCustomMetadata(t, FQDNArnTestData)
+	onPremEnvSecretPrefixed := GenerateTestSecretsWithCustomMetadata(t, onPremEnvPrefix)
 
 	// Define the test cases
 	testCases := []struct {
@@ -46,10 +63,24 @@ func TestExtractCustomKeyFromCustomMetadata(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name:    "SecretWithCustomMetaDataNoSync",
+			key:     "NO_SYNC",
+			secret:  noSyncSecret,
+			want:    noSyncCustomMetaData["custom_metadata"].(map[string]interface{})["NO_SYNC"],
+			wantErr: false,
+		},
+		{
 			name:    "FQDNArnTestData",
 			key:     "AWS_ARN_REF",
 			secret:  FQDNSecret,
 			want:    FQDNArnTestData["custom_metadata"].(map[string]interface{})["AWS_ARN_REF"],
+			wantErr: false,
+		},
+		{
+			name:    "onPremEnvSecretPrefixed",
+			key:     "ENABLE_ON_PREM_ENVIRONMENT_PREFIX",
+			secret:  onPremEnvSecretPrefixed,
+			want:    onPremEnvPrefix["custom_metadata"].(map[string]interface{})["ENABLE_ON_PREM_ENVIRONMENT_PREFIX"],
 			wantErr: false,
 		},
 	}
@@ -67,6 +98,7 @@ func TestExtractCustomKeyFromCustomMetadata(t *testing.T) {
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("ExtractCustomKeyFromCustomMetadata() got = %v, want %v", got, tc.want)
 			}
+			t.Logf("ExtractCustomKeyFromCustomMetadata() got = %v, want %v\n", got, tc.want)
 		})
 	}
 }
@@ -171,13 +203,14 @@ func TestWriteAWSKeyValueSecret(t *testing.T) {
 		},
 	}
 
+	theConfig := config{}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Setup
 			customMetadataSecret := GenerateTestSecretsWithCustomMetadata(t, tc.customMetadata)
 
 			// Invoke
-			err := WriteAWSKeyValueSecret(customMetadataSecret, tc.secretName)
+			err := WriteAWSKeyValueSecret(customMetadataSecret, tc.secretName, theConfig)
 
 			// Assert
 			if (err != nil) != tc.expectError {
@@ -326,6 +359,75 @@ func TestWriteMissingAWSSecrets(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			c := config{awsRole: "aws-specific-role-for-secretsmanager", awsSecretPrefix: "/subPath/"}
 			WriteMissingAWSSecrets(tt.currentSecretList, c)
+		})
+	}
+}
+
+func TestCreateAWSSecret(t *testing.T) {
+	tests := []struct {
+		name          string
+		secret        api.Secret
+		awsSecretName string
+		kmsKeyId      *string
+		want          *secretsmanager.CreateSecretInput
+		wantErr       bool
+	}{
+		{
+			name: "valid secret without KMS key",
+			secret: api.Secret{
+				Data: map[string]interface{}{
+					"data": map[string]interface{}{
+						"username": "test",
+						"password": "secret",
+					},
+				},
+			},
+			awsSecretName: "test-secret",
+			kmsKeyId:      nil,
+			want: &secretsmanager.CreateSecretInput{
+				Name:         aws.String("test-secret"),
+				SecretString: aws.String(`{"username":"test","password":"secret"}`),
+				Tags:         nil,
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid secret with KMS key",
+			secret: api.Secret{
+				Data: map[string]interface{}{
+					"data": map[string]interface{}{
+						"username": "test",
+						"password": "secret",
+					},
+				},
+			},
+			awsSecretName: "test-secret",
+			kmsKeyId:      aws.String("test-key-id"),
+			want: &secretsmanager.CreateSecretInput{
+				Name:         aws.String("test-secret"),
+				SecretString: aws.String(`{"username":"test","password":"secret"}`),
+				KmsKeyId:     aws.String("test-key-id"),
+				Tags:         nil,
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := CreateAWSSecret(tt.secret, tt.awsSecretName, tt.kmsKeyId)
+			if tt.wantErr {
+				t.Errorf("CreateAWSSecret() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if tt.want.KmsKeyId != nil && got.KmsKeyId != nil {
+				// Compare actual values if both pointers are non-nil
+				if *tt.want.KmsKeyId != *got.KmsKeyId {
+					t.Errorf("CreateAWSSecret() got = %v, want %v", got, tt.want)
+
+				}
+			}
+
 		})
 	}
 }
