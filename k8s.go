@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"log/slog"
 	"os"
 	"reflect"
@@ -40,17 +41,28 @@ func applyAnnotations(dataFields *api.Secret, config config) map[string]string {
 		jsonLogger.Debug("No datafields applied", "len(data[metadata]", len(dataFields.Data))
 	} else {
 		for k, v := range dataFields.Data["metadata"].(map[string]interface{}) {
-			switch v.(type) {
+			switch val := v.(type) {
 			case float64:
-				float64value := reflect.ValueOf(v)
-				float64convert := strconv.FormatFloat(float64value.Float(), 'f', -1, 64)
-				Annotations[k] = float64convert
+				Annotations[k] = strconv.FormatFloat(val, 'f', -1, 64)
+			case int:
+				Annotations[k] = strconv.Itoa(val)
 			case string:
-				Annotations[k] = v.(string)
+				Annotations[k] = val
 			case bool:
-				booleanvalue := reflect.ValueOf(v)
-				boolconvert := strconv.FormatBool(booleanvalue.Bool())
-				Annotations[k] = boolconvert
+				Annotations[k] = strconv.FormatBool(val)
+			case map[string]interface{}:
+				// Handle nested maps (like custom_metadata) by converting to JSON
+				jsonBytes, err := json.Marshal(val)
+				if err != nil {
+					jsonLogger.Warn("failed to marshal nested map in metadata to JSON", "key", k, "error", err)
+					continue
+				}
+				Annotations[k] = string(jsonBytes)
+			case nil:
+				// Skip nil values
+				jsonLogger.Debug("skipping nil value in metadata", "key", k)
+			default:
+				jsonLogger.Debug("unsupported metadata value type", "key", k, "type", reflect.TypeOf(v))
 			}
 		}
 	}
@@ -69,8 +81,51 @@ func applyDatafieldsTok8sSecret(dataFields *api.Secret, Annotations map[string]s
 	} else {
 		for k, v := range dataFields.Data["data"].(map[string]interface{}) {
 			jsonLogger.Debug("createK8sSecret: dataFields.Data[data] iterate", "key", k, "value", v, "datafields", dataFields.Data["data"])
-			if strings.HasPrefix(v.(string), "base64:") {
-				stringSplit := strings.Split(v.(string), ":")
+
+			// Convert value to string based on its actual type
+			var valueStr string
+			switch val := v.(type) {
+			case string:
+				valueStr = val
+			case map[string]interface{}:
+				// Handle nested maps by converting to JSON
+				jsonBytes, err := json.Marshal(val)
+				if err != nil {
+					jsonLogger.Warn("failed to marshal nested map to JSON", "key", k, "error", err)
+					continue
+				}
+				valueStr = string(jsonBytes)
+			case []interface{}, []string, []int, []float64, []bool:
+				// Handle arrays/slices by converting to JSON
+				jsonBytes, err := json.Marshal(val)
+				if err != nil {
+					jsonLogger.Warn("failed to marshal array to JSON", "key", k, "error", err)
+					continue
+				}
+				valueStr = string(jsonBytes)
+			case float64:
+				valueStr = strconv.FormatFloat(val, 'f', -1, 64)
+			case int:
+				valueStr = strconv.Itoa(val)
+			case bool:
+				valueStr = strconv.FormatBool(val)
+			case nil:
+				jsonLogger.Debug("skipping nil value in secret data", "key", k)
+				continue
+			default:
+				// Try to marshal as JSON as a fallback for unknown types
+				jsonBytes, err := json.Marshal(val)
+				if err != nil {
+					jsonLogger.Warn("unsupported value type in secret data", "key", k, "type", reflect.TypeOf(v))
+					continue
+				}
+				valueStr = string(jsonBytes)
+				jsonLogger.Debug("converted unknown type to JSON", "key", k, "type", reflect.TypeOf(v))
+			}
+
+			// Now process the string value
+			if strings.HasPrefix(valueStr, "base64:") {
+				stringSplit := strings.Split(valueStr, ":")
 				if isBase64(stringSplit[1]) {
 					data[k], _ = base64.StdEncoding.DecodeString(stringSplit[1])
 					jsonLogger.Debug("createK8sSecret: dataFields.Data[data] found base64-encoding", "key", k, "value", v, "split", stringSplit, "datafields", dataFields.Data["data"])
@@ -78,10 +133,10 @@ func applyDatafieldsTok8sSecret(dataFields *api.Secret, Annotations map[string]s
 					jsonLogger.Warn("key is not valid BASE64", "key", k, "value", v)
 				}
 			} else if isDocumentationKey(newConfig.DocumentationKeys, k) {
-				Annotations[k] = v.(string)
+				Annotations[k] = valueStr
 				jsonLogger.Debug("createK8sSecret: dataFields.Data[data] found description field", "key", k, "value", v, "datafields", dataFields.Data["data"], "Annotations", Annotations)
 			} else {
-				stringdata[k] = v.(string)
+				stringdata[k] = valueStr
 				jsonLogger.Debug("createK8sSecret: dataFields.Data[data] catch all. putting value in stringdata[]", "key", k, "value", v, "datafields", dataFields.Data["data"])
 			}
 		}
