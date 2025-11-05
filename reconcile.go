@@ -131,7 +131,7 @@ func synchronizeVaultSecrets(secretList []interface{}, client *api.Client, theCo
 							NotifyTeamsChannel(msgTitle, msgBody, KubernetesNotificationUrl)
 						}
 						initKubernetesSearch(path, theConfig)
-					} else if !readSealedSecretAndCompareWithVaultStruct(theVaultSecret, newBase, theConfig.secretEngine) {
+					} else if !readSealedSecretAndCompareWithVaultStruct(path, theVaultSecret, newBase, theConfig.secretEngine) {
 						jsonLogger.Debug("readSealedSecretAndCompare: we already have this secret. Vault did not update", slog.String("secret", SealedSecret.Name))
 					} else {
 						// we need to update the secret.
