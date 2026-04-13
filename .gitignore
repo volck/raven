@@ -4,3 +4,12 @@ vendor/
 main
 raven
 
+# Sensitive files
+id_rsa
+id_rsa.pub
+key.pem
+publickey.pem
+ntcert.crt
+deployments/vault-ssg-auth-dev-token
+deployments/vault-ssg-test-token.yaml
+
