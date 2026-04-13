@@ -1,0 +1,13 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ssg-a01631-reader
+  namespace: a01631 
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ssg-a01631-reader
+subjects:
+- namespace: ssg 
+  kind: ServiceAccount
+  name: ssg-a01631-cleaner 

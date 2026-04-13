@@ -3,6 +3,8 @@ dist/
 vendor/
 main
 /raven
+/logparser
+/git
 
 # Sensitive files
 id_rsa
