@@ -2,7 +2,7 @@ dist/
 .idea/
 vendor/
 main
-raven
+/raven
 
 # Sensitive files
 id_rsa
