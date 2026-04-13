@@ -278,7 +278,7 @@ func searchKubernetesForResults(ctx context.Context, Mysecret string, c config) 
 
 		watcher, err := c.Clientset.CoreV1().Secrets(c.destEnv).Watch(context.Background(), metav1.ListOptions{})
 		if err != nil {
-			jsonLogger.Error("searchKubernetesForResults timeout", err)
+			jsonLogger.Error("searchKubernetesForResults timeout", "error", err)
 		}
 		for {
 			for event := range watcher.ResultChan() {

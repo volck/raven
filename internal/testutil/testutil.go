@@ -1,0 +1,154 @@
+package testutil
+
+import (
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
+	"fmt"
+	"testing"
+
+	. "github.com/hashicorp/vault-plugin-secrets-kv"
+	"github.com/hashicorp/vault/api"
+	vaulthttp "github.com/hashicorp/vault/http"
+	"github.com/hashicorp/vault/sdk/logical"
+	hashivault "github.com/hashicorp/vault/vault"
+	"github.com/volck/raven/internal/config"
+)
+
+func CreateVaultTestCluster(t *testing.T) *hashivault.TestCluster {
+	t.Helper()
+
+	coreConfig := &hashivault.CoreConfig{
+		LogicalBackends: map[string]logical.Factory{
+			"kv": Factory,
+		},
+	}
+	cluster := hashivault.NewTestCluster(t, coreConfig, &hashivault.TestClusterOptions{
+		HandlerFunc: vaulthttp.Handler,
+	})
+	cluster.Start()
+
+	// Create KV V2 mount
+	if err := cluster.Cores[0].Client.Sys().Mount("kv", &api.MountInput{
+		Type: "kv",
+		Options: map[string]string{
+			"version": "2",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	return cluster
+}
+
+func GenerateTestSecrets(t *testing.T, client *api.Client, cfg config.Config, secretName string) {
+	t.Helper()
+
+	secrets := map[string]interface{}{
+		"data":     map[string]interface{}{"secretKey": "secretValue"},
+		"metadata": map[string]interface{}{"version": 2},
+	}
+	writePath := fmt.Sprintf("%s/data/%s", cfg.SecretEngine, secretName)
+	client.Logical().Write(writePath, secrets)
+}
+
+func DeleteTestSecrets(t *testing.T, client *api.Client, cfg config.Config, secretName string) {
+	t.Helper()
+	dataPath := fmt.Sprintf("%s/data/%s", cfg.SecretEngine, secretName)
+	client.Logical().Delete(dataPath)
+	metadataPath := fmt.Sprintf("%s/metadata/%s", cfg.SecretEngine, secretName)
+	client.Logical().Delete(metadataPath)
+}
+
+func ReturnPrivateKey(t *testing.T) map[string]*rsa.PrivateKey {
+	t.Helper()
+	rsaPrivateKey := `-----BEGIN RSA PRIVATE KEY-----
+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
+-----END RSA PRIVATE KEY-----
+`
+
+	block, _ := pem.Decode([]byte(rsaPrivateKey))
+	if block == nil {
+		t.Fatal("failed to decode pem")
+	}
+	privateKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err != nil {
+		t.Fatal("parsePKCS1PrivateKey failed", err)
+	}
+	privateKeys := make(map[string]*rsa.PrivateKey)
+	privateKeys["mykey"] = privateKey
+	return privateKeys
+}
+
+func GenerateTestSecretsWithCustomMetadata(t *testing.T, customMetadata map[string]interface{}) *api.Secret {
+	t.Helper()
+
+	secretData := map[string]interface{}{
+		"data":     map[string]interface{}{"key": "value", "many": "keys", "some": "values"},
+		"metadata": customMetadata,
+	}
+	secret := &api.Secret{
+		Data: secretData,
+	}
+
+	return secret
+}
+
+func NewTestConfig(cluster *hashivault.TestCluster) config.Config {
+	client := cluster.Cores[0].Client
+	return config.Config{
+		VaultEndpoint: client.Address(),
+		SecretEngine:  "kv",
+		Token:         client.Token(),
+		DestEnv:       "kv",
+		PemFile:       "cert.pem",
+	}
+}
