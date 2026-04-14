@@ -374,6 +374,9 @@ function switchTab(name) {
   for (var i = 0; i < tabs.length; i++) {
     if (tabs[i].getAttribute('onclick').indexOf(name) !== -1) { tabs[i].classList.add('active'); break; }
   }
+  if (location.hash.replace('#','') !== name && !(location.hash.indexOf('#secret/') === 0)) {
+    history.replaceState(null, '', '#' + name);
+  }
 }
 
 var allRows = [];
@@ -820,6 +823,7 @@ function showPipeline(secretName) {
   var body = document.getElementById('pipelineModalBody');
   body.innerHTML = '<div class="modal-title">' + secretName + '</div><div class="modal-subtitle">Loading lifecycle...</div>';
   modal.classList.add('show');
+  history.replaceState(null, '', '#secret/' + encodeURIComponent(secretName));
   fetch('/api/v1/pipeline')
     .then(function(r){ return r.json(); })
     .then(function(data) {
@@ -899,11 +903,29 @@ function showPipeline(secretName) {
 
 function closePipeline() {
   document.getElementById('pipelineModal').classList.remove('show');
+  var tab = document.querySelector('.tab-panel.active');
+  if (tab) history.replaceState(null, '', '#' + tab.id.replace('tab-', ''));
+  else history.replaceState(null, '', '#secrets');
 }
 
 document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape') closePipeline();
 });
+
+function routeFromHash() {
+  var hash = location.hash.replace('#', '');
+  if (!hash) return;
+  if (hash.indexOf('secret/') === 0) {
+    var name = decodeURIComponent(hash.substring(7));
+    switchTab('secrets');
+    showPipeline(name);
+  } else if (['secrets','events','k8s'].indexOf(hash) !== -1) {
+    switchTab(hash);
+  }
+}
+
+window.addEventListener('hashchange', routeFromHash);
+window.addEventListener('load', function() { if (location.hash) routeFromHash(); });
 </script>
 </body>
 </html>`
