@@ -329,30 +329,32 @@ func startRaven(RavenCfg *config.Config) {
 
 	for {
 		if !vaultpkg.ValidToken(vaultClient) {
+			helpers.JsonLogger.Warn("Token is invalid, retrying after sleep")
+			helpers.Sleep(RavenCfg.SleepTime)
 			continue
 		}
 		helpers.JsonLogger.Debug("Validated Token: grabbing list of secrets")
 		list, err := vaultpkg.GetAllKVs(vaultClient, newConfig.SecretEngine)
 		if err != nil {
 			helpers.JsonLogger.Error("getAllKVs list error", "error", err)
+			helpers.Sleep(RavenCfg.SleepTime)
 			continue
 		}
 
 		if list == nil {
-			gitops.CleanDeadEntries(newConfig)
+			helpers.JsonLogger.Warn("Secret engine returned empty list — skipping cycle (deletes are handled by event-driven path)",
+				"engine", newConfig.SecretEngine)
+			helpers.Sleep(RavenCfg.SleepTime)
 			continue
 		}
 
 		currentSecrets = map[string]*api.Secret{}
 		secretList := list.Data["keys"].([]interface{})
 		synchronizeVaultSecrets(secretList, vaultClient, newConfig)
-		PickedRipeSecrets := vaultpkg.PickRipeSecrets(State, currentSecrets)
 		ripeAwsSecrets := vaultpkg.FindRipeAWSSecrets(State, currentSecrets)
 		awspkg.WriteMissingAWSSecrets(currentSecrets, newConfig)
-		harvestRipeSecrets(PickedRipeSecrets, newConfig)
 		awspkg.HarvestRipeAwsSecrets(ripeAwsSecrets, newConfig)
 		gitops.GitPush(newConfig)
-		helpers.JsonLogger.Debug("PickedRipeSecrets list", "PickedRipeSecrets", PickedRipeSecrets, "ripeAwsSecrets", ripeAwsSecrets)
 
 		State = currentSecrets
 		secretHandler.SetSyncStatus(time.Now(), RavenCfg.SleepTime)
@@ -392,11 +394,10 @@ func harvestRipeSecrets(RipeSecrets []string, cfg config.Config) {
 
 func synchronizeVaultSecrets(secretList []interface{}, client *api.Client, cfg config.Config) {
 	if secretList != nil {
-		for _, secret := range secretList {
-			helpers.JsonLogger.Debug("Checking secret", "secret", secret)
-			input := fmt.Sprintf("%s/", cfg.SecretEngine)
-			vaultpkg.IterateList(input, client, secret.(string), currentSecrets)
-		}
+		// Single pass: IterateList with the engine root recurses all secrets
+		input := fmt.Sprintf("%s/", cfg.SecretEngine)
+		vaultpkg.IterateList(input, client, "", currentSecrets)
+
 		if currentSecrets != nil {
 			for path, theVaultSecret := range currentSecrets {
 				helpers.JsonLogger.Debug("processing secret", "path", path)

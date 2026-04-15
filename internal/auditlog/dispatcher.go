@@ -15,9 +15,9 @@ type DispatchEvent struct {
 	SecretPath   string `json:"secret_path"`
 }
 
-// Dispatcher routes secret events to the correct Raven API instance.
+// Dispatcher routes secret events to the correct Raven API instance(s).
 type Dispatcher struct {
-	routing        map[string]string // secret engine → Raven URL
+	routing        map[string][]string // secret engine → Raven URLs
 	httpClient     *http.Client
 	MaxRetries     int           // Maximum number of retry attempts (0 = no retry)
 	RetryBaseDelay time.Duration // Base delay for exponential backoff
@@ -25,7 +25,7 @@ type Dispatcher struct {
 
 // NewDispatcher creates a Dispatcher with the given routing table and optional HTTP client.
 // If httpClient is nil, http.DefaultClient is used.
-func NewDispatcher(routing map[string]string, httpClient *http.Client) *Dispatcher {
+func NewDispatcher(routing map[string][]string, httpClient *http.Client) *Dispatcher {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
@@ -37,11 +37,12 @@ func NewDispatcher(routing map[string]string, httpClient *http.Client) *Dispatch
 	}
 }
 
-// Dispatch sends a secret event to the appropriate Raven API instance.
+// Dispatch sends a secret event to the appropriate Raven API instance(s).
+// If multiple URLs are configured for an engine, dispatches to all of them.
 // Retries with exponential backoff on transient failures (5xx or connection errors).
 func (d *Dispatcher) Dispatch(event DispatchEvent) error {
-	targetURL, ok := d.routing[event.SecretEngine]
-	if !ok {
+	targetURLs, ok := d.routing[event.SecretEngine]
+	if !ok || len(targetURLs) == 0 {
 		return fmt.Errorf("no route configured for engine: %s", event.SecretEngine)
 	}
 
@@ -49,6 +50,21 @@ func (d *Dispatcher) Dispatch(event DispatchEvent) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal event: %w", err)
 	}
+
+	var errs []error
+	for _, targetURL := range targetURLs {
+		if err := d.dispatchToURL(targetURL, body); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", targetURL, err))
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("dispatch errors: %v", errs)
+	}
+	return nil
+}
+
+func (d *Dispatcher) dispatchToURL(targetURL string, body []byte) error {
 
 	var lastErr error
 	maxAttempts := 1 + d.MaxRetries

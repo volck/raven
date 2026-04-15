@@ -6,9 +6,9 @@ import (
 
 // LogParserConfig holds the configuration for the log parser.
 type LogParserConfig struct {
-	AuditLogPath  string            `json:"audit_log_path"`
-	SecretEngines []string          `json:"secret_engines"`
-	Routing       map[string]string `json:"routing"`
+	AuditLogPath  string              `json:"audit_log_path"`
+	SecretEngines []string            `json:"secret_engines"`
+	Routing       map[string][]string `json:"routing"`
 	OIDC          struct {
 		TokenURL     string   `json:"token_url"`
 		ClientID     string   `json:"client_id"`
@@ -31,7 +31,8 @@ func ValidateConfig(cfg LogParserConfig) error {
 		return fmt.Errorf("at least one routing entry is required")
 	}
 	for _, engine := range cfg.SecretEngines {
-		if _, ok := cfg.Routing[engine]; !ok {
+		urls, ok := cfg.Routing[engine]
+		if !ok || len(urls) == 0 {
 			return fmt.Errorf("no route configured for engine: %s", engine)
 		}
 	}

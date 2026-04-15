@@ -299,8 +299,8 @@ func TestDispatcher_PostsToCorrectURL(t *testing.T) {
 	}))
 	defer targetServer.Close()
 
-	routing := map[string]string{
-		"team-a-kv": targetServer.URL,
+	routing := map[string][]string{
+		"team-a-kv": {targetServer.URL},
 	}
 
 	d := NewDispatcher(routing, nil) // nil httpClient = default client
@@ -331,8 +331,8 @@ func TestDispatcher_PostsToCorrectURL(t *testing.T) {
 }
 
 func TestDispatcher_UnknownEngine(t *testing.T) {
-	routing := map[string]string{
-		"team-a-kv": "http://localhost:9999",
+	routing := map[string][]string{
+		"team-a-kv": {"http://localhost:9999"},
 	}
 	d := NewDispatcher(routing, nil)
 
@@ -464,7 +464,7 @@ func TestDispatcher_RetryOnFailure(t *testing.T) {
 	}))
 	defer server.Close()
 
-	routing := map[string]string{"kv": server.URL}
+	routing := map[string][]string{"kv": {server.URL}}
 	d := NewDispatcher(routing, nil)
 	d.MaxRetries = 5
 	d.RetryBaseDelay = 10 * time.Millisecond
@@ -484,7 +484,7 @@ func TestDispatcher_ExhaustsRetries(t *testing.T) {
 	}))
 	defer server.Close()
 
-	routing := map[string]string{"kv": server.URL}
+	routing := map[string][]string{"kv": {server.URL}}
 	d := NewDispatcher(routing, nil)
 	d.MaxRetries = 2
 	d.RetryBaseDelay = 10 * time.Millisecond
@@ -530,7 +530,7 @@ func TestFileTailer_DetectsRotation(t *testing.T) {
 func TestValidateConfig_MissingAuditLogPath(t *testing.T) {
 	cfg := LogParserConfig{
 		SecretEngines: []string{"kv"},
-		Routing:       map[string]string{"kv": "http://localhost:8080"},
+		Routing:       map[string][]string{"kv": {"http://localhost:8080"}},
 	}
 	err := ValidateConfig(cfg)
 	if err == nil {
@@ -542,7 +542,7 @@ func TestValidateConfig_EmptySecretEngines(t *testing.T) {
 	cfg := LogParserConfig{
 		AuditLogPath:  "/vault/audit.log",
 		SecretEngines: []string{},
-		Routing:       map[string]string{"kv": "http://localhost:8080"},
+		Routing:       map[string][]string{"kv": {"http://localhost:8080"}},
 	}
 	err := ValidateConfig(cfg)
 	if err == nil {
@@ -554,7 +554,7 @@ func TestValidateConfig_EmptyRouting(t *testing.T) {
 	cfg := LogParserConfig{
 		AuditLogPath:  "/vault/audit.log",
 		SecretEngines: []string{"kv"},
-		Routing:       map[string]string{},
+		Routing:       map[string][]string{},
 	}
 	err := ValidateConfig(cfg)
 	if err == nil {
@@ -566,7 +566,7 @@ func TestValidateConfig_MissingRouteForEngine(t *testing.T) {
 	cfg := LogParserConfig{
 		AuditLogPath:  "/vault/audit.log",
 		SecretEngines: []string{"kv", "team-b-kv"},
-		Routing:       map[string]string{"kv": "http://localhost:8080"},
+		Routing:       map[string][]string{"kv": {"http://localhost:8080"}},
 	}
 	err := ValidateConfig(cfg)
 	if err == nil {
@@ -578,7 +578,7 @@ func TestValidateConfig_Valid(t *testing.T) {
 	cfg := LogParserConfig{
 		AuditLogPath:  "/vault/audit.log",
 		SecretEngines: []string{"kv"},
-		Routing:       map[string]string{"kv": "http://localhost:8080"},
+		Routing:       map[string][]string{"kv": {"http://localhost:8080"}},
 	}
 	err := ValidateConfig(cfg)
 	if err != nil {

@@ -29,6 +29,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Allow OIDC client secret from environment (preferred over config file)
+	if envSecret := os.Getenv("OIDC_CLIENT_SECRET"); envSecret != "" {
+		cfg.OIDC.ClientSecret = envSecret
+	}
+
 	if err := auditlog.ValidateConfig(cfg); err != nil {
 		logger.Error("Invalid configuration", "error", err)
 		os.Exit(1)

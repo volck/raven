@@ -86,6 +86,59 @@ func TestIterateList(t *testing.T) {
 	}
 }
 
+// TestIterateListSingleCall verifies that a single IterateList call from the
+// engine root discovers all secrets including those nested in subpaths.
+// This mirrors the O(n²) fix in cmd/raven/main.go where we replaced
+// per-secret IterateList calls with a single call.
+func TestIterateListSingleCall(t *testing.T) {
+	cluster := testutil.CreateVaultTestCluster(t)
+	defer cluster.Cleanup()
+	client := cluster.Cores[0].Client
+
+	secretOne := map[string]interface{}{
+		"data":     map[string]interface{}{"SecretOne": "secretValue"},
+		"metadata": map[string]interface{}{"version": 2},
+	}
+	secretTwo := map[string]interface{}{
+		"data":     map[string]interface{}{"secretTwo": "secretValue"},
+		"metadata": map[string]interface{}{"version": 2},
+	}
+	secretThree := map[string]interface{}{
+		"data":     map[string]interface{}{"secretThree": "secretValue"},
+		"metadata": map[string]interface{}{"version": 2},
+	}
+
+	// Root-level secret
+	client.Logical().Write("kv/data/rootsecret", secretOne)
+	// One level deep
+	client.Logical().Write("kv/data/subpathone/nested", secretTwo)
+	// Two levels deep
+	client.Logical().Write("kv/data/subpathone/subpathtwo/deepnested", secretThree)
+
+	// Single call from engine root — the pattern used by the fix
+	currentSecrets := map[string]*api.Secret{}
+	IterateList("kv/", client, "", currentSecrets)
+
+	if len(currentSecrets) != 3 {
+		t.Fatalf("expected 3 secrets, got %d: %v", len(currentSecrets), keys(currentSecrets))
+	}
+
+	// Verify each secret was found with correct key
+	for _, expected := range []string{"rootsecret", "nested", "deepnested"} {
+		if _, ok := currentSecrets[expected]; !ok {
+			t.Errorf("missing secret %q, got keys: %v", expected, keys(currentSecrets))
+		}
+	}
+}
+
+func keys(m map[string]*api.Secret) []string {
+	ks := make([]string, 0, len(m))
+	for k := range m {
+		ks = append(ks, k)
+	}
+	return ks
+}
+
 func TestValidToken(t *testing.T) {
 	t.Parallel()
 
