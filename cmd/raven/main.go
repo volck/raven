@@ -206,6 +206,10 @@ func handleRequests(cfg config.Config, vaultClient *api.Client) *ravenapi.Secret
 	secretHandler.SetHub(hub)
 	mux.HandleFunc("/ws", hub.ServeWS)
 
+	// Refresh/sync endpoints — no auth, accessible from dashboard
+	mux.Handle("/api/v1/refresh", forceRefreshHandler(vaultClient, cfg))
+	mux.Handle("/api/v1/refresh-secret", secretHandler.RefreshSecretHandler())
+
 	// OIDC auth middleware when issuer is configured
 	issuerURL := os.Getenv("OIDC_ISSUER_URL")
 	audience := os.Getenv("OIDC_AUDIENCE")
@@ -218,13 +222,9 @@ func handleRequests(cfg config.Config, vaultClient *api.Client) *ravenapi.Secret
 		}
 		middleware := auth.AuthMiddleware(verifier)
 		mux.Handle("/api/v1/secret", middleware(secretHandler))
-		mux.Handle("/api/v1/refresh", middleware(forceRefreshHandler(vaultClient, cfg)))
-		mux.Handle("/api/v1/refresh-secret", middleware(secretHandler.RefreshSecretHandler()))
 		helpers.JsonLogger.Info("OIDC authentication enabled", "issuer", issuerURL, "audience", audience)
 	} else {
 		mux.Handle("/api/v1/secret", secretHandler)
-		mux.Handle("/api/v1/refresh", forceRefreshHandler(vaultClient, cfg))
-		mux.Handle("/api/v1/refresh-secret", secretHandler.RefreshSecretHandler())
 		helpers.JsonLogger.Warn("OIDC authentication disabled — OIDC_ISSUER_URL or OIDC_AUDIENCE not set")
 	}
 
