@@ -191,7 +191,7 @@ func handleRequests(cfg config.Config, vaultClient *api.Client) *ravenapi.Secret
 	// SQLite event store for persistent event history
 	dbPath := os.Getenv("RAVEN_DB_PATH")
 	if dbPath == "" {
-		dbPath = "/data/raven-events.db"
+		dbPath = "/tmp/raven-events.db"
 	}
 	eventStore, err := store.NewEventStore(dbPath, 500)
 	if err != nil {
