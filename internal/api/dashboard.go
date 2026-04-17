@@ -106,7 +106,7 @@ const dashboardHTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Raven Dashboard</title>
+<title>Raven – {{.DestEnv}}</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27><text y=%27.9em%27 font-size=%2790%27>🐦‍⬛</text></svg>">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
