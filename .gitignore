@@ -14,4 +14,13 @@ publickey.pem
 ntcert.crt
 deployments/vault-ssg-auth-dev-token
 deployments/vault-ssg-test-token.yaml
+deployments/secret-*.yaml
+deployments/ssg-*.yaml
+deployments/ssg-*.json
+deployments/ansible/*.retry
+ssgkubernetesvault.deployment
+
+# Build artifacts and test fixtures
+bin/
+declarative/
 
