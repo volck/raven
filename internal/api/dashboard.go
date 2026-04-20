@@ -176,7 +176,7 @@ const dashboardHTML = `<!DOCTYPE html>
   .collapsible-header h2 { margin-bottom: 0; }
   .collapse-icon { color: #8b949e; font-size: 0.8em; transition: transform 0.2s; display: inline-block; }
   .collapse-icon.collapsed { transform: rotate(-90deg); }
-  .collapsible-body { overflow: hidden; transition: max-height 0.3s ease; }
+  .collapsible-body { transition: max-height 0.3s ease; }
   .collapsible-body.collapsed { max-height: 0 !important; overflow: hidden; }
   .manual-refresh { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px 20px; margin-bottom: 20px; overflow: visible; }
   .manual-refresh-title { color: #58a6ff; font-size: 0.85em; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
