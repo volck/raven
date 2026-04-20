@@ -1,0 +1,28 @@
+[Unit]
+Description=Raven Vault Audit Log Parser
+After=network-online.target vault.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vault
+Group=vault
+ExecStart=/usr/local/bin/raven-logparser
+Environment=LOGPARSER_CONFIG=/etc/raven/logparser.json
+Environment=OIDC_CLIENT_SECRET=
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=raven-logparser
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/
+ReadWritePaths=/var/lib/raven /var/log/vault
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,129 @@
+---
+- name: Deploy Raven Log Parser
+  hosts: vault_servers
+  become: true
+  vars:
+    logparser_binary: "{{ playbook_dir }}/../../bin/raven-logparser"
+    logparser_config: "{{ playbook_dir }}/../logparser-config-prod.json"
+    logparser_service: "{{ playbook_dir }}/../raven-logparser.service"
+    install_dir: /usr/local/bin
+    config_dir: /etc/raven
+    state_dir: /var/lib/raven
+    service_user: vault
+    service_group: vault
+    vault_addr: https://vault.norsk-tipping.no
+    vault_secret_path: intern/data/team-cp/raven/log-parser
+    oidc_client_secret: ""
+
+  tasks:
+    - name: Check Vault prerequisites
+      ansible.builtin.assert:
+        that:
+          - vault_addr | length > 0
+          - vault_token is defined and vault_token | length > 0
+        fail_msg: "vault_addr and vault_token must be set. Pass -e vault_token=YOUR_TOKEN"
+      when: oidc_client_secret | length == 0
+
+    - name: Fetch OIDC client secret from Vault
+      ansible.builtin.uri:
+        url: "{{ vault_addr }}/v1/{{ vault_secret_path }}"
+        method: GET
+        headers:
+          X-Vault-Token: "{{ vault_token }}"
+        return_content: true
+        validate_certs: true
+        status_code: 200
+      register: vault_response
+      delegate_to: localhost
+      become: false
+      when: oidc_client_secret | length == 0
+
+    - name: Extract client secret from Vault response
+      ansible.builtin.set_fact:
+        oidc_client_secret: "{{ vault_response.json.data.data.client_secret | default(vault_response.json.data.client_secret) }}"
+      when: vault_response is not skipped
+
+    - name: Verify client secret was retrieved
+      ansible.builtin.assert:
+        that:
+          - oidc_client_secret | length > 0
+        fail_msg: "Failed to retrieve OIDC client secret from Vault at {{ vault_secret_path }}"
+
+    - name: Ensure directories exist
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "{{ config_dir }}", owner: root, group: "{{ service_group }}", mode: "0750" }
+        - { path: "{{ state_dir }}", owner: "{{ service_user }}", group: "{{ service_group }}", mode: "0750" }
+
+    - name: Copy logparser binary
+      ansible.builtin.copy:
+        src: "{{ logparser_binary }}"
+        dest: "{{ install_dir }}/raven-logparser"
+        owner: root
+        group: root
+        mode: "0755"
+      notify: Restart raven-logparser
+
+    - name: Copy logparser config
+      ansible.builtin.copy:
+        src: "{{ logparser_config }}"
+        dest: "{{ config_dir }}/logparser.json"
+        owner: "{{ service_user }}"
+        group: "{{ service_group }}"
+        mode: "0640"
+      notify: Restart raven-logparser
+
+    - name: Copy systemd unit
+      ansible.builtin.copy:
+        src: "{{ logparser_service }}"
+        dest: /etc/systemd/system/raven-logparser.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd
+        - Restart raven-logparser
+
+    - name: Ensure systemd override directory exists
+      ansible.builtin.file:
+        path: /etc/systemd/system/raven-logparser.service.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Set OIDC client secret in systemd override
+      ansible.builtin.copy:
+        content: |
+          [Service]
+          Environment=OIDC_CLIENT_SECRET={{ oidc_client_secret }}
+        dest: /etc/systemd/system/raven-logparser.service.d/secret.conf
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+      notify:
+        - Reload systemd
+        - Restart raven-logparser
+
+    - name: Enable and start raven-logparser
+      ansible.builtin.systemd:
+        name: raven-logparser
+        enabled: true
+        state: started
+        daemon_reload: true
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart raven-logparser
+      ansible.builtin.systemd:
+        name: raven-logparser
+        state: restarted
