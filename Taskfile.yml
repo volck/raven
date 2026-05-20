@@ -1,0 +1,70 @@
+version: '3'
+
+# Taskfile for raven. Run with `task <name>` (https://taskfile.dev).
+
+vars:
+  LOGPARSER_PKG: ./cmd/logparser
+  RAVEN_PKG: ./cmd/raven
+  KO_DOCKER_REPO: '{{.KO_DOCKER_REPO | default "ghcr.io/volck/raven"}}'
+
+tasks:
+  test:
+    desc: Run all tests with race detector and shuffled order.
+    cmds:
+      - go test -race -shuffle=on ./...
+
+  test:cover:
+    desc: Run all tests with coverage report.
+    cmds:
+      - go test -race -coverprofile=coverage.out ./...
+      - go tool cover -func=coverage.out
+
+  lint:
+    desc: Run go vet and gofmt check.
+    cmds:
+      - go vet ./...
+      - test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+
+  run:logparser:
+    desc: Run logparser locally (requires LOGPARSER_CONFIG env).
+    cmds:
+      - go run {{.LOGPARSER_PKG}}
+
+  run:raven:
+    desc: Run raven locally.
+    cmds:
+      - go run {{.RAVEN_PKG}}
+
+  build:logparser:
+    desc: Build the logparser container image with ko (local).
+    env:
+      KO_DOCKER_REPO: '{{.KO_DOCKER_REPO}}'
+    cmds:
+      - ko build --local --bare {{.LOGPARSER_PKG}}
+
+  build:raven:
+    desc: Build the raven container image with ko (local).
+    env:
+      KO_DOCKER_REPO: '{{.KO_DOCKER_REPO}}'
+    cmds:
+      - ko build --local --bare {{.RAVEN_PKG}}
+
+  push:logparser:
+    desc: Build & push the logparser container image with ko.
+    env:
+      KO_DOCKER_REPO: '{{.KO_DOCKER_REPO}}'
+    cmds:
+      - ko build --bare {{.LOGPARSER_PKG}}
+
+  push:raven:
+    desc: Build & push the raven container image with ko.
+    env:
+      KO_DOCKER_REPO: '{{.KO_DOCKER_REPO}}'
+    cmds:
+      - ko build --bare {{.RAVEN_PKG}}
+
+  ci:
+    desc: Run the full CI pipeline (lint + test).
+    cmds:
+      - task: lint
+      - task: test
