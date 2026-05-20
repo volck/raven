@@ -17,14 +17,22 @@ type DispatchEvent struct {
 
 // Dispatcher routes secret events to the correct Raven API instance(s).
 type Dispatcher struct {
-	routing        map[string][]string // secret engine → Raven URLs
+	routing        map[string][]string // legacy static routing (used when snapshot is nil)
+	snapshot       RoutingSnapshotter
 	httpClient     *http.Client
 	MaxRetries     int           // Maximum number of retry attempts (0 = no retry)
 	RetryBaseDelay time.Duration // Base delay for exponential backoff
 }
 
-// NewDispatcher creates a Dispatcher with the given routing table and optional HTTP client.
-// If httpClient is nil, http.DefaultClient is used.
+// RoutingSnapshotter exposes the current RoutingConfig to the Dispatcher.
+// The Provider implements this interface.
+type RoutingSnapshotter interface {
+	Snapshot() RoutingConfig
+}
+
+// NewDispatcher creates a Dispatcher with a static routing table. Used by
+// existing callers; new callers should prefer NewDispatcherFromSnapshot so
+// routes update at runtime without restarting the process.
 func NewDispatcher(routing map[string][]string, httpClient *http.Client) *Dispatcher {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
@@ -37,11 +45,36 @@ func NewDispatcher(routing map[string][]string, httpClient *http.Client) *Dispat
 	}
 }
 
+// NewDispatcherFromSnapshot creates a Dispatcher that looks up routes from
+// the given RoutingSnapshotter on every Dispatch call. This is the canonical
+// constructor; Provider implements RoutingSnapshotter.
+func NewDispatcherFromSnapshot(snap RoutingSnapshotter, httpClient *http.Client) *Dispatcher {
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	return &Dispatcher{
+		snapshot:       snap,
+		httpClient:     httpClient,
+		MaxRetries:     3,
+		RetryBaseDelay: 1 * time.Second,
+	}
+}
+
+// routes returns the current routing table — from the live snapshot if
+// configured, otherwise from the static map passed to NewDispatcher.
+func (d *Dispatcher) routes() map[string][]string {
+	if d.snapshot != nil {
+		return d.snapshot.Snapshot().Routing
+	}
+	return d.routing
+}
+
 // Dispatch sends a secret event to the appropriate Raven API instance(s).
 // If multiple URLs are configured for an engine, dispatches to all of them.
 // Retries with exponential backoff on transient failures (5xx or connection errors).
 func (d *Dispatcher) Dispatch(event DispatchEvent) error {
-	targetURLs, ok := d.routing[event.SecretEngine]
+	routing := d.routes()
+	targetURLs, ok := routing[event.SecretEngine]
 	if !ok || len(targetURLs) == 0 {
 		return fmt.Errorf("no route configured for engine: %s", event.SecretEngine)
 	}
