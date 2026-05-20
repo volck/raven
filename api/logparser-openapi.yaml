@@ -1,0 +1,179 @@
+openapi: 3.1.0
+info:
+  title: Raven Logparser API
+  version: 1.0.0
+  description: |
+    HTTP API exposed by the raven logparser.
+
+    The logparser tails a Vault audit log and dispatches refresh events to
+    downstream raven instances based on a routing table. The routing table
+    maps a secret-engine name (an "SSG") to one or more target URLs.
+
+    All endpoints are read-only and return either `text/plain` (liveness /
+    readiness) or `application/json` (routing API). There is no
+    authentication today — the service is expected to be reached over a
+    trusted network or fronted by a reverse proxy.
+  contact:
+    name: raven maintainers
+    url: https://github.com/volck/raven
+  license:
+    name: See repository LICENSE
+servers:
+  - url: http://localhost:8080
+    description: Local development
+  - url: http://logparser.internal
+    description: In-cluster (example)
+tags:
+  - name: health
+    description: Liveness and readiness probes.
+  - name: routing
+    description: Inspect the active routing table.
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      summary: Liveness probe
+      description: |
+        Returns `200 OK` as soon as the HTTP server is accepting
+        connections. Does not reflect whether the routing snapshot
+        has been loaded — use `/readyz` for that.
+      operationId: getHealthz
+      responses:
+        "200":
+          description: Service is alive.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+  /readyz:
+    get:
+      tags: [health]
+      summary: Readiness probe
+      description: |
+        Returns `200 OK` once the routing provider has completed its first
+        successful refresh (either the static configuration was loaded or
+        the initial git clone + parse succeeded). Returns `503` until
+        then.
+      operationId: getReadyz
+      responses:
+        "200":
+          description: Routing snapshot is loaded.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ready
+        "503":
+          description: Routing snapshot has not been loaded yet.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: not ready
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+  /api/v1/ssgs:
+    get:
+      tags: [routing]
+      summary: List secret engines
+      description: |
+        Returns the list of secret-engine names (SSGs) currently known to
+        the logparser. The list is taken from the active routing snapshot
+        and reflects the most recent successful refresh.
+      operationId: listSSGs
+      responses:
+        "200":
+          description: List of secret-engine names. May be empty.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecretEngineList"
+              examples:
+                populated:
+                  summary: Two engines configured
+                  value: ["ssg-dev", "ssg-prod01"]
+                empty:
+                  summary: No engines configured yet
+                  value: []
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+  /api/v1/ssgs/{name}:
+    get:
+      tags: [routing]
+      summary: List targets for one secret engine
+      description: |
+        Returns the routing targets configured for a single secret-engine
+        name. Returns `404` if the name is not present in the current
+        routing snapshot.
+      operationId: getSSG
+      parameters:
+        - $ref: "#/components/parameters/SSGName"
+      responses:
+        "200":
+          description: Routing targets for the named secret engine. May be empty.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TargetList"
+              examples:
+                populated:
+                  summary: Two downstream targets
+                  value:
+                    - https://raven-a.internal/webhook
+                    - https://raven-b.internal/webhook
+                empty:
+                  summary: Engine known but no targets configured
+                  value: []
+        "404":
+          description: No secret engine with this name exists in the snapshot.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: 404 page not found
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+components:
+  parameters:
+    SSGName:
+      name: name
+      in: path
+      required: true
+      description: Secret-engine name (SSG identifier).
+      schema:
+        type: string
+        minLength: 1
+        example: ssg-prod01
+  responses:
+    MethodNotAllowed:
+      description: |
+        The endpoint exists but does not support the HTTP method used.
+        Only `GET` is supported on every endpoint.
+      content:
+        text/plain:
+          schema:
+            type: string
+            example: Method Not Allowed
+  schemas:
+    SecretEngineList:
+      type: array
+      description: List of secret-engine (SSG) names.
+      items:
+        type: string
+        minLength: 1
+      example: ["ssg-dev", "ssg-prod01"]
+    TargetList:
+      type: array
+      description: |
+        List of routing target URLs for a single secret engine. Each entry
+        is the URL of a downstream raven instance that should be notified
+        when the engine changes.
+      items:
+        type: string
+        format: uri
+      example:
+        - https://raven-a.internal/webhook
+        - https://raven-b.internal/webhook
