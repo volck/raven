@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/vault/api"
+	"github.com/volck/raven/internal/helpers"
 	appsv1 "k8s.io/api/apps/v1"
 	authorization "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -501,8 +502,14 @@ createK8sSecret generates k8s secrets based on inputs:
 - datafield: data for secret
 returns v1.Secret for consumption by SealedSecret
 */
-func createK8sSecret(name string, config config, dataFields *api.Secret) (secret v1.Secret) {
+func createK8sSecret(sourcePath string, config config, dataFields *api.Secret) (secret v1.Secret) {
+	// Sanitize the Vault path into a valid RFC 1123 DNS subdomain so the
+	// resulting Kubernetes / SealedSecret resource name is always accepted
+	// by the API server. The original path is preserved in an annotation
+	// for diagnostics and collision detection (see internal/api/handler.go).
+	name := helpers.SanitizeK8sName(sourcePath)
 	Annotations := applyAnnotations(dataFields, config)
+	Annotations[helpers.AnnotationSourcePath] = sourcePath
 	data, stringdata := applyDatafieldsTok8sSecret(dataFields, Annotations, name)
 	Annotations = applyMetadata(dataFields, Annotations)
 	ravenLabels := applyRavenLabels()

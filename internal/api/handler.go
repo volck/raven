@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -21,6 +22,7 @@ import (
 	"github.com/volck/raven/internal/store"
 	vaultpkg "github.com/volck/raven/internal/vault"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/yaml"
 )
 
 var jsonLogger = helpers.JsonLogger
@@ -51,6 +53,9 @@ type Hooks struct {
 	WriteAWS func(secret *api.Secret, path string, cfg config.Config) error
 	// InitK8sSearch triggers Kubernetes secret lookup. If nil, k8s.InitKubernetesSearch is used.
 	InitK8sSearch func(secret string, cfg config.Config)
+	// ArgoSync triggers an ArgoCD refresh+sync of the configured Application after
+	// a create/update event. If nil, the default implementation in argosync.go is used.
+	ArgoSync func(ctx context.Context, secretName string) error
 	// CreateK8sSecret creates a Kubernetes secret object. If nil, k8s.CreateK8sSecret is used.
 	CreateK8sSecret func(name string, cfg config.Config, dataFields *api.Secret) interface{}
 	// CreateSealedSecret creates a sealed secret. If nil, uses sealedsecret package functions.
@@ -248,7 +253,7 @@ func (h *SecretEventHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	switch event.Operation {
 	case "create", "update":
-		h.handleCreateOrUpdate(w, event)
+		h.handleCreateOrUpdate(r.Context(), w, event)
 	case "delete":
 		h.handleDelete(w, event)
 	default:
@@ -256,7 +261,7 @@ func (h *SecretEventHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *SecretEventHandler) handleCreateOrUpdate(w http.ResponseWriter, event SecretEvent) {
+func (h *SecretEventHandler) handleCreateOrUpdate(ctx context.Context, w http.ResponseWriter, event SecretEvent) {
 	theVaultSecret := vaultpkg.GetSingleKV(h.client, event.SecretEngine, event.SecretPath)
 	if theVaultSecret == nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -301,6 +306,33 @@ func (h *SecretEventHandler) handleCreateOrUpdate(w http.ResponseWriter, event S
 
 	// Write sealed secret to disk
 	newBase := helpers.EnsurePathAndReturnWritePath(h.cfg.ClonePath, h.cfg.DestEnv, ss.Name)
+
+	// Collision check: another Vault path may have sanitized to the same
+	// Kubernetes resource name. Refuse to overwrite a sealed secret that
+	// originated from a different source path.
+	if existing, err := readSourcePathAnnotation(newBase); err == nil && existing != "" && existing != event.SecretPath {
+		msg := fmt.Sprintf(
+			"sanitized name %q already used by source path %q (incoming source %q); refusing to overwrite",
+			ss.Name, existing, event.SecretPath,
+		)
+		jsonLogger.Error("handleCreateOrUpdate.collision",
+			"sanitizedName", ss.Name,
+			"existingSourcePath", existing,
+			"incomingSourcePath", event.SecretPath,
+			"file", newBase,
+		)
+		h.recordEvent(event.Operation, event.SecretEngine, event.SecretPath, "collision", msg)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(SecretEventResponse{
+			Status:     "collision",
+			Operation:  event.Operation,
+			SecretPath: event.SecretPath,
+			Message:    msg,
+		})
+		return
+	}
+
 	sealedsecret.SerializeSealedSecretToFile(ss, newBase)
 	jsonLogger.Info("Wrote sealed secret",
 		slog.String("action", "request.operation."+event.Operation),
@@ -344,6 +376,16 @@ func (h *SecretEventHandler) handleCreateOrUpdate(w http.ResponseWriter, event S
 		initK8s = h.hooks.InitK8sSearch
 	}
 	initK8s(ss.Name, h.cfg)
+
+	// ArgoCD refresh+sync of the configured Application (opt-in via env).
+	argoSync := h.defaultArgoSync
+	if h.hooks.ArgoSync != nil {
+		argoSync = h.hooks.ArgoSync
+	}
+	if err := argoSync(ctx, ss.Name); err != nil {
+		jsonLogger.Error("handleCreateOrUpdate.ArgoSync", "error", err, "secret", ss.Name)
+		h.recordEvent("argocd-sync", event.SecretEngine, event.SecretPath, "error", err.Error())
+	}
 
 	h.recordEvent(event.Operation, event.SecretEngine, event.SecretPath, "ok", fmt.Sprintf("sealed secret written to %s", filepath.Base(newBase)))
 
@@ -442,7 +484,7 @@ func (h *SecretEventHandler) RefreshSecretHandler() http.HandlerFunc {
 			SecretEngine: h.cfg.SecretEngine,
 			SecretPath:   req.SecretPath,
 		}
-		h.handleCreateOrUpdate(w, event)
+		h.handleCreateOrUpdate(r.Context(), w, event)
 	}
 }
 
@@ -755,4 +797,29 @@ func PipelineHandler(cfg config.Config, events *SecretEventHandler) http.Handler
 		}
 		json.NewEncoder(w).Encode(entries)
 	}
+}
+
+// readSourcePathAnnotation reads a serialized SealedSecret YAML from path and
+// returns the value of the raven.no/source-path annotation. Returns "" and
+// nil error when the file does not exist (no collision). Returns "" and a
+// non-nil error only when the file exists but cannot be parsed; in that case
+// the caller should err on the side of treating it as no-collision (logs the
+// error elsewhere) rather than silently blocking writes.
+func readSourcePathAnnotation(path string) (string, error) {
+data, err := os.ReadFile(path)
+if err != nil {
+if os.IsNotExist(err) {
+return "", nil
+}
+return "", err
+}
+var doc struct {
+Metadata struct {
+Annotations map[string]string `json:"annotations"`
+} `json:"metadata"`
+}
+if err := yaml.Unmarshal(data, &doc); err != nil {
+return "", err
+}
+return doc.Metadata.Annotations[helpers.AnnotationSourcePath], nil
 }

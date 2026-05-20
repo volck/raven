@@ -1,10 +1,93 @@
 package helpers
 
 import (
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/vault/api"
 )
+
+// rfc1123Subdomain matches the Kubernetes DNS subdomain pattern used for
+// metadata.name on Secret/SealedSecret resources.
+var rfc1123Subdomain = regexp.MustCompile(`^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$`)
+
+func TestSanitizeK8sName(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"real failing case", "nt/middlearth-aws-resource-viewer-credentials-prod", "nt-middlearth-aws-resource-viewer-credentials-prod"},
+		{"multiple slashes", "nt/foo/bar/baz", "nt-foo-bar-baz"},
+		{"uppercase and dot", "Team_A/My.Secret", "team-a-my.secret"},
+		{"underscores", "custom_metadataSecret", "custom-metadatasecret"},
+		{"leading and trailing slashes", "/leading/slash/", "leading-slash"},
+		{"double slashes collapse", "nt//foo", "nt-foo"},
+		{"trailing dots trimmed", "foo...", "foo"},
+		{"leading dots trimmed", "...foo", "foo"},
+		{"already valid", "foo-bar.baz", "foo-bar.baz"},
+		{"digits at start allowed", "123-foo", "123-foo"},
+		{"single char", "a", "a"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := SanitizeK8sName(tt.in)
+			if got != tt.want {
+				t.Errorf("SanitizeK8sName(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+			if !rfc1123Subdomain.MatchString(got) {
+				t.Errorf("SanitizeK8sName(%q) = %q does not match RFC 1123 subdomain", tt.in, got)
+			}
+		})
+	}
+}
+
+func TestSanitizeK8sName_LengthCap(t *testing.T) {
+	in := strings.Repeat("a", 300)
+	got := SanitizeK8sName(in)
+	if len(got) != 253 {
+		t.Errorf("length = %d, want 253", len(got))
+	}
+	if !rfc1123Subdomain.MatchString(got) {
+		t.Errorf("%q is not a valid RFC 1123 subdomain", got)
+	}
+}
+
+func TestSanitizeK8sName_LengthCapTrimsTail(t *testing.T) {
+	// 252 'a's followed by enough '/' to push past 253; after replacement
+	// to '-' and length cap, the tail should be trimmed of '-'.
+	in := strings.Repeat("a", 252) + "////////"
+	got := SanitizeK8sName(in)
+	if strings.HasSuffix(got, "-") || strings.HasSuffix(got, ".") {
+		t.Errorf("got %q must not end with '-' or '.'", got)
+	}
+	if !rfc1123Subdomain.MatchString(got) {
+		t.Errorf("%q is not a valid RFC 1123 subdomain", got)
+	}
+}
+
+func TestSanitizeK8sName_FallbackForEmpty(t *testing.T) {
+	cases := []string{"", "///", "...", "_-_-_"}
+	for _, in := range cases {
+		got := SanitizeK8sName(in)
+		if !strings.HasPrefix(got, "raven-") {
+			t.Errorf("SanitizeK8sName(%q) = %q, expected fallback with raven- prefix", in, got)
+		}
+		if !rfc1123Subdomain.MatchString(got) {
+			t.Errorf("fallback %q is not a valid RFC 1123 subdomain", got)
+		}
+	}
+}
+
+func TestSanitizeK8sName_Deterministic(t *testing.T) {
+	in := "nt/middlearth-aws-resource-viewer-credentials-prod"
+	a := SanitizeK8sName(in)
+	b := SanitizeK8sName(in)
+	if a != b {
+		t.Errorf("not deterministic: %q vs %q", a, b)
+	}
+}
 
 func TestIsBase64(t *testing.T) {
 	tests := []struct {

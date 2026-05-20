@@ -1,7 +1,9 @@
 package helpers
 
 import (
+	"crypto/sha1"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -16,6 +18,66 @@ import (
 	"github.com/hashicorp/vault/api"
 	log "github.com/sirupsen/logrus"
 )
+
+// AnnotationSourcePath is the annotation key used to record the original
+// (un-sanitized) Vault secret path on generated Kubernetes / SealedSecret
+// resources. Useful for diagnosing collisions after SanitizeK8sName has been
+// applied to derive metadata.name.
+const AnnotationSourcePath = "raven.no/source-path"
+
+// maxK8sNameLength is the RFC 1123 DNS subdomain maximum length used for
+// most Kubernetes resource names (including Secret and SealedSecret).
+const maxK8sNameLength = 253
+
+// SanitizeK8sName converts an arbitrary string (typically a Vault secret
+// path like "nt/middlearth-aws-resource-viewer-credentials-prod") into a
+// valid RFC 1123 DNS subdomain suitable for use as metadata.name on a
+// Kubernetes Secret or SealedSecret. The transformation is:
+//   - lowercase
+//   - replace any rune outside [a-z0-9.-] with '-'
+//   - collapse runs of '-' into a single '-'
+//   - trim leading/trailing '-' and '.'
+//   - truncate to 253 chars (re-trimming the tail)
+//
+// If the result would be empty (e.g. input was "" or "///"), a deterministic
+// fallback of the form "raven-<sha1[:8]>" is returned so the caller still
+// gets a usable, stable name.
+//
+// The transformation is intentionally lossy: callers that need the original
+// path should preserve it separately (see AnnotationSourcePath).
+func SanitizeK8sName(name string) string {
+	original := name
+	lower := strings.ToLower(name)
+
+	var b strings.Builder
+	b.Grow(len(lower))
+	prevDash := false
+	for _, r := range lower {
+		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '.'
+		if !ok {
+			r = '-'
+		}
+		if r == '-' {
+			if prevDash {
+				continue
+			}
+			prevDash = true
+		} else {
+			prevDash = false
+		}
+		b.WriteRune(r)
+	}
+	s := strings.Trim(b.String(), "-.")
+	if len(s) > maxK8sNameLength {
+		s = s[:maxK8sNameLength]
+		s = strings.TrimRight(s, "-.")
+	}
+	if s == "" {
+		sum := sha1.Sum([]byte(original))
+		s = "raven-" + hex.EncodeToString(sum[:])[:8]
+	}
+	return s
+}
 
 var JsonLogger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{AddSource: true}))
 

@@ -287,8 +287,18 @@ func MonitorMessages(watchlist []string) {
 	}
 }
 
-func CreateK8sSecret(name string, cfg config.Config, dataFields *api.Secret) v1.Secret {
+// CreateK8sSecret builds an in-memory Kubernetes Secret from a Vault secret.
+//
+// sourcePath is the original (un-sanitized) Vault secret path, e.g.
+// "nt/middlearth-aws-resource-viewer-credentials-prod". It is sanitized via
+// helpers.SanitizeK8sName to produce metadata.name (so the resource name is
+// always a valid RFC 1123 DNS subdomain), and the original value is preserved
+// in the annotation helpers.AnnotationSourcePath for diagnostics and
+// collision detection.
+func CreateK8sSecret(sourcePath string, cfg config.Config, dataFields *api.Secret) v1.Secret {
+	name := helpers.SanitizeK8sName(sourcePath)
 	Annotations := ApplyAnnotations(dataFields, cfg)
+	Annotations[helpers.AnnotationSourcePath] = sourcePath
 	data, stringdata := ApplyDatafieldsTok8sSecret(dataFields, Annotations, name, cfg.DocumentationKeys)
 	Annotations = ApplyMetadata(dataFields, Annotations)
 	ravenLabels := ApplyRavenLabels()
