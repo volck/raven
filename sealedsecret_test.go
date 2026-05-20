@@ -192,6 +192,12 @@ func TestGetKVAndCreateSealedSecretWithDocumentKeysAnnotations(t *testing.T) {
 	secretName := "DocumentKeyAnnotation"
 	pemFile := `cert.crt`
 
+	// createK8sSecret consults newConfig.DocumentationKeys to decide which
+	// data keys should be promoted to annotations. In production this is
+	// populated by initAdditionalKeys() during startup; initialize it here
+	// so the unit test does not depend on global startup side effects.
+	newConfig.DocumentationKeys = initAdditionalKeys()
+
 	SingleKVFromVault := getSingleKV(client, secretEngine, secretName)
 	k8sSecret := createK8sSecret(secretName, config, SingleKVFromVault)
 	SealedSecret := createSealedSecret(pemFile, &k8sSecret)
