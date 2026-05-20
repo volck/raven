@@ -1,0 +1,15 @@
+{
+  "audit_log_path": "/vault/audit/audit.log",
+  "secret_engines": ["team-a-kv", "team-b-kv"],
+  "routing": {
+    "team-a-kv": ["http://raven-team-a.team-a-ns.svc.cluster.local:8080"],
+    "team-b-kv": ["http://raven-team-b.team-b-ns.svc.cluster.local:8080"]
+  },
+  "oidc": {
+    "token_url": "https://idp.example.com/oauth2/token",
+    "client_id": "raven-logparser",
+    "client_secret": "",
+    "scopes": ["raven:dispatch"]
+  },
+  "state_file": "/var/lib/raven/logparser-offset"
+}

@@ -37,6 +37,21 @@ spec:
           value: myenv 
         - name: CLONE_PATH
           value: /tmp/clone
+        # ArgoCD sync (opt-in). When ARGOCD_SYNC_ENABLED=true, every
+        # successful create/update will hard-refresh + sync ARGOCD_APP_NAME.
+        # Per-engine JWT mapping is achieved by mounting a per-Deployment K8s
+        # Secret here.
+        - name: ARGOCD_SYNC_ENABLED
+          value: "false"
+        - name: ARGOCD_SERVER
+          value: https://argocd.example.com
+        - name: ARGOCD_APP_NAME
+          value: ssg
+        - name: ARGOCD_AUTH_TOKEN
+          valueFrom:
+            secretKeyRef:
+              key: token
+              name: argocd-token
           image: ghcr.io/volck/raven:v1.0.0 
         imagePullPolicy: IfNotPresent
         name: raven 

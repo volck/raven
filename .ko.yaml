@@ -1,0 +1,7 @@
+defaultBaseImage: harbor.norsk-tipping.no/dockerhub/library/alpine:latest
+builds:
+- id: raven
+  main: ./cmd/raven/
+  baseImage: harbor.norsk-tipping.no/dockerhub/alpine/git:latest
+- id: logparser
+  main: ./cmd/logparser/

@@ -1,0 +1,37 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"rbac.authorization.k8s.io/v1","kind":"Role","metadata":{"annotations":{},"name":"ssg-dev-reader","namespace":"dev"},"rules":[{"apiGroups":[""],"resources":["secrets"],"verbs":["get","list","watch","create","update","patch","delete"]}]}
+  creationTimestamp: "2021-11-17T10:15:47Z"
+  managedFields:
+  - apiVersion: rbac.authorization.k8s.io/v1
+    fieldsType: FieldsV1
+    fieldsV1:
+      f:metadata:
+        f:annotations:
+          .: {}
+          f:kubectl.kubernetes.io/last-applied-configuration: {}
+      f:rules: {}
+    manager: oc
+    operation: Update
+    time: "2021-11-17T10:15:47Z"
+  name: ssg-dev-reader
+  namespace: dev
+  resourceVersion: "1198562157"
+  selfLink: /apis/rbac.authorization.k8s.io/v1/namespaces/dev/roles/ssg-dev-reader
+  uid: 75258a5b-3a58-4a46-b968-5ead76f2ed81
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete

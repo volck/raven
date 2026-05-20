@@ -1,4 +1,4 @@
-package main
+package k8s
 
 import (
 	"context"
@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/hashicorp/vault/api"
-	"github.com/volck/raven/internal/helpers"
 	appsv1 "k8s.io/api/apps/v1"
 	authorization "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -21,12 +20,28 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+
+	"github.com/volck/raven/internal/config"
+	"github.com/volck/raven/internal/helpers"
+	vaultpkg "github.com/volck/raven/internal/vault"
 )
+
+var jsonLogger = helpers.JsonLogger
+var Added = make(chan string)
+
+// K8sEvent represents a lifecycle event from the K8s namespace watcher.
+type K8sEvent struct {
+	Type      string // "k8s-added", "k8s-modified", "k8s-deleted", "k8s-rollout"
+	Secret    string
+	Namespace string
+	Message   string
+}
 
 type Watcher struct {
 	Logger    *slog.Logger
 	ClientSet kubernetes.Interface
 	Namespace string
+	OnEvent   func(K8sEvent) // optional callback for lifecycle events
 }
 
 func NewWatcher(logger *slog.Logger, clientSet kubernetes.Interface, namespace string) *Watcher {
@@ -34,10 +49,9 @@ func NewWatcher(logger *slog.Logger, clientSet kubernetes.Interface, namespace s
 	return &Watcher{Logger: logger, ClientSet: clientSet, Namespace: namespace}
 }
 
-func applyAnnotations(dataFields *api.Secret, config config) map[string]string {
-
+func ApplyAnnotations(dataFields *api.Secret, cfg config.Config) map[string]string {
 	Annotations := make(map[string]string)
-	Annotations["source"] = config.secretEngine
+	Annotations["source"] = cfg.SecretEngine
 	if len(dataFields.Data["metadata"].(map[string]interface{})) == 0 {
 		jsonLogger.Debug("No datafields applied", "len(data[metadata]", len(dataFields.Data))
 	} else {
@@ -52,7 +66,6 @@ func applyAnnotations(dataFields *api.Secret, config config) map[string]string {
 			case bool:
 				Annotations[k] = strconv.FormatBool(val)
 			case map[string]interface{}:
-				// Handle nested maps (like custom_metadata) by converting to JSON
 				jsonBytes, err := json.Marshal(val)
 				if err != nil {
 					jsonLogger.Warn("failed to marshal nested map in metadata to JSON", "key", k, "error", err)
@@ -60,36 +73,32 @@ func applyAnnotations(dataFields *api.Secret, config config) map[string]string {
 				}
 				Annotations[k] = string(jsonBytes)
 			case nil:
-				// Skip nil values
 				jsonLogger.Debug("skipping nil value in metadata", "key", k)
 			default:
 				jsonLogger.Debug("unsupported metadata value type", "key", k, "type", reflect.TypeOf(v))
 			}
 		}
 	}
-
 	return Annotations
 }
 
-func applyDatafieldsTok8sSecret(dataFields *api.Secret, Annotations map[string]string, name string) (data map[string][]byte, stringdata map[string]string) {
+func ApplyDatafieldsTok8sSecret(dataFields *api.Secret, Annotations map[string]string, name string, documentationKeys []string) (data map[string][]byte, stringdata map[string]string) {
 	stringdata = make(map[string]string)
 	data = make(map[string][]byte)
 	if dataFields.Data["data"] == nil {
-		jsonLogger.Debug("Trying to apply data fields to kubernetes secret, but vault datafields seem to be empty. Was this secret deleted correctly? Skipping.", "secret", name)
+		jsonLogger.Debug("Trying to apply data fields to kubernetes secret, but vault datafields seem to be empty.", "secret", name)
 	} else if len(dataFields.Data["data"].(map[string]interface{})) == 0 {
-		jsonLogger.Debug("Trying to apply datafields to kubernetes secret, but no datafields could be placed.", "len(data[metadata])", len(dataFields.Data["metadata"].(map[string]interface{})), "secret", name)
+		jsonLogger.Debug("Trying to apply datafields to kubernetes secret, but no datafields could be placed.", "secret", name)
 		return data, stringdata
 	} else {
 		for k, v := range dataFields.Data["data"].(map[string]interface{}) {
-			jsonLogger.Debug("createK8sSecret: dataFields.Data[data] iterate", "key", k, "value", v, "datafields", dataFields.Data["data"])
+			jsonLogger.Debug("createK8sSecret: dataFields.Data[data] iterate", "key", k, "value", v)
 
-			// Convert value to string based on its actual type
 			var valueStr string
 			switch val := v.(type) {
 			case string:
 				valueStr = val
 			case map[string]interface{}:
-				// Handle nested maps by converting to JSON
 				jsonBytes, err := json.Marshal(val)
 				if err != nil {
 					jsonLogger.Warn("failed to marshal nested map to JSON", "key", k, "error", err)
@@ -97,7 +106,6 @@ func applyDatafieldsTok8sSecret(dataFields *api.Secret, Annotations map[string]s
 				}
 				valueStr = string(jsonBytes)
 			case []interface{}, []string, []int, []float64, []bool:
-				// Handle arrays/slices by converting to JSON
 				jsonBytes, err := json.Marshal(val)
 				if err != nil {
 					jsonLogger.Warn("failed to marshal array to JSON", "key", k, "error", err)
@@ -114,130 +122,101 @@ func applyDatafieldsTok8sSecret(dataFields *api.Secret, Annotations map[string]s
 				jsonLogger.Debug("skipping nil value in secret data", "key", k)
 				continue
 			default:
-				// Try to marshal as JSON as a fallback for unknown types
 				jsonBytes, err := json.Marshal(val)
 				if err != nil {
 					jsonLogger.Warn("unsupported value type in secret data", "key", k, "type", reflect.TypeOf(v))
 					continue
 				}
 				valueStr = string(jsonBytes)
-				jsonLogger.Debug("converted unknown type to JSON", "key", k, "type", reflect.TypeOf(v))
 			}
 
-			// Now process the string value
 			if strings.HasPrefix(valueStr, "base64:") {
 				stringSplit := strings.Split(valueStr, ":")
-				if isBase64(stringSplit[1]) {
+				if helpers.IsBase64(stringSplit[1]) {
 					data[k], _ = base64.StdEncoding.DecodeString(stringSplit[1])
-					jsonLogger.Debug("createK8sSecret: dataFields.Data[data] found base64-encoding", "key", k, "value", v, "split", stringSplit, "datafields", dataFields.Data["data"])
 				} else {
-					jsonLogger.Warn("key is not valid BASE64", "key", k, "value", v)
+					jsonLogger.Warn("key is not valid BASE64", "key", k)
 				}
-			} else if isDocumentationKey(newConfig.DocumentationKeys, k) {
+			} else if helpers.IsDocumentationKey(documentationKeys, k) {
 				Annotations[k] = valueStr
-				jsonLogger.Debug("createK8sSecret: dataFields.Data[data] found description field", "key", k, "value", v, "datafields", dataFields.Data["data"], "Annotations", Annotations)
 			} else {
 				stringdata[k] = valueStr
-				jsonLogger.Debug("createK8sSecret: dataFields.Data[data] catch all. putting value in stringdata[]", "key", k, "value", v, "datafields", dataFields.Data["data"])
 			}
 		}
 	}
 	return data, stringdata
 }
 
-func applyRavenLabels() map[string]string {
+func ApplyRavenLabels() map[string]string {
 	labels := make(map[string]string)
 	labels["managedBy"] = "raven"
 	return labels
 }
 
-func applyMetadata(dataFields *api.Secret, Annotations map[string]string) map[string]string {
-
+func ApplyMetadata(dataFields *api.Secret, Annotations map[string]string) map[string]string {
 	if len(dataFields.Data["metadata"].(map[string]interface{})) == 0 {
-		jsonLogger.Debug("No metadata placed", "len(data[metadata])", len(dataFields.Data["metadata"].(map[string]interface{})))
+		jsonLogger.Debug("No metadata placed")
 		return Annotations
 	}
 	for k, v := range dataFields.Data["metadata"].(map[string]interface{}) {
-		// we handle descriptions for KVs here, in order to show which secrets are handled by which SSG.
-		switch v.(type) {
+		switch val := v.(type) {
 		case float64:
-			float64value := reflect.ValueOf(v)
-			float64convert := strconv.FormatFloat(float64value.Float(), 'f', -1, 64)
-			Annotations[k] = float64convert
-			jsonLogger.Debug("createK8sSecret: dataFields.Data[metadata] case match float64", "key", k, "value", v, "datafields", dataFields.Data["metadata"])
+			Annotations[k] = strconv.FormatFloat(val, 'f', -1, 64)
 		case string:
-			Annotations[k] = v.(string)
-			jsonLogger.Debug("createK8sSecret: dataFields.Data[metadata] case match string", "key", k, "value", v, "datafields", dataFields.Data["metadata"])
+			Annotations[k] = val
 		case bool:
-			booleanvalue := reflect.ValueOf(v)
-			boolconvert := strconv.FormatBool(booleanvalue.Bool())
-			Annotations[k] = boolconvert
-			jsonLogger.Debug("createK8sSecret: dataFields.Data[metadata] case match bool", "key", k, "value", v, "datafields", dataFields.Data["metadata"])
+			Annotations[k] = strconv.FormatBool(val)
 		}
-
 	}
-	_, customMetadataFound := GetCustomMetadataFromSecret(dataFields)
-	if customMetadataFound {
 
+	_, customMetadataFound := vaultpkg.GetCustomMetadataFromSecret(dataFields)
+	if customMetadataFound {
 		for k, v := range dataFields.Data["metadata"].(map[string]interface{})["custom_metadata"].(map[string]interface{}) {
-			// we handle descriptions for KVs here, in order to show which secrets are handled by which SSG.
-			switch v.(type) {
+			switch val := v.(type) {
 			case float64:
-				float64value := reflect.ValueOf(v)
-				float64convert := strconv.FormatFloat(float64value.Float(), 'f', -1, 64)
-				Annotations[k] = float64convert
-				jsonLogger.Debug("createK8sSecret: dataFields.Data[metadata][custom_metadata] case match float64", "key", k, "value", v, "datafields", dataFields.Data["metadata"])
+				Annotations[k] = strconv.FormatFloat(val, 'f', -1, 64)
 			case string:
-				Annotations[k] = v.(string)
-				jsonLogger.Debug("createK8sSecret: dataFields.Data[metadata][custom_metadata] case match string", "key", k, "value", v, "datafields", dataFields.Data["metadata"])
+				Annotations[k] = val
 			case bool:
-				booleanvalue := reflect.ValueOf(v)
-				boolconvert := strconv.FormatBool(booleanvalue.Bool())
-				Annotations[k] = boolconvert
-				jsonLogger.Debug("createK8sSecret: dataFields.Data[metadata][custom_metadata] case match bool", "key", k, "value", v, "datafields", dataFields.Data["metadata"])
+				Annotations[k] = strconv.FormatBool(val)
 			}
 		}
 	}
-
 	return Annotations
-
 }
 
-func NewSecretWithContents(contents SecretContents, config config) (secret v1.Secret) {
-	secret = v1.Secret{
+func NewSecretWithContents(contents config.SecretContents, cfg config.Config) v1.Secret {
+	secret := v1.Secret{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "SealedSecret",
 			APIVersion: "bitnami.com/v1alpha1",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        contents.name,
-			Namespace:   config.destEnv,
+			Name:        contents.Name,
+			Namespace:   cfg.DestEnv,
 			Annotations: contents.Annotations,
 			Labels:      contents.Labels,
 		},
-		Data:       contents.data,
-		StringData: contents.stringdata,
+		Data:       contents.Data,
+		StringData: contents.StringData,
 		Type:       "Opaque",
 	}
 	return secret
 }
 
 func NewKubernetesClient() *kubernetes.Clientset {
-	// creates the in-cluster config
-
-	config, err := rest.InClusterConfig()
+	k8sConfig, err := rest.InClusterConfig()
 	if err != nil {
 		jsonLogger.Error("NewKubernetesClient incluster config failed", "error", err)
 	}
-	// creates the clientset
-	Clientset, err := kubernetes.NewForConfig(config)
+	Clientset, err := kubernetes.NewForConfig(k8sConfig)
 	if err != nil {
 		jsonLogger.Error("NewKubernetesClient clientset failed", "error", err)
 	}
 	return Clientset
 }
 
-func kubernetesSecretList(c kubernetes.Interface, destEnv string) (*v1.SecretList, error) {
+func KubernetesSecretList(c kubernetes.Interface, destEnv string) (*v1.SecretList, error) {
 	sl, err := c.CoreV1().Secrets(destEnv).List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		jsonLogger.Error("clientset secrets error", "error", err)
@@ -245,24 +224,17 @@ func kubernetesSecretList(c kubernetes.Interface, destEnv string) (*v1.SecretLis
 	return sl, err
 }
 
-func hask8sRavenLabel(secret v1.Secret) bool {
-	haslabel := false
-	if secret.Labels["managedBy"] == "raven" {
-		haslabel = true
-	}
-
-	return haslabel
+func Hask8sRavenLabel(secret v1.Secret) bool {
+	return secret.Labels["managedBy"] == "raven"
 }
 
-func kubernetesRemove(ripeSecrets []string, kubernetesSecretList *v1.SecretList, clientSet kubernetes.Interface, destEnv string) {
-	kubernetesRemove := os.Getenv("KUBERNETESREMOVE")
-	if kubernetesRemove == "true" {
+func KubernetesRemove(ripeSecrets []string, kubernetesSecretList *v1.SecretList, clientSet kubernetes.Interface, destEnv string) {
+	kubernetesRemoveEnv := os.Getenv("KUBERNETESREMOVE")
+	if kubernetesRemoveEnv == "true" {
 		for _, k8sSecret := range kubernetesSecretList.Items {
-			if stringSliceContainsString(ripeSecrets, k8sSecret.Name) && hask8sRavenLabel(k8sSecret) {
+			if helpers.StringSliceContainsString(ripeSecrets, k8sSecret.Name) && Hask8sRavenLabel(k8sSecret) {
 				jsonLogger.Info("Secret no longer available in vault or in git. Removing from Kubernetes namespace.",
-					"secret", k8sSecret.Name,
-					"action", "kubernetes.delete",
-					"namespace", destEnv)
+					"secret", k8sSecret.Name, "action", "kubernetes.delete", "namespace", destEnv)
 
 				err := clientSet.CoreV1().Secrets(destEnv).Delete(context.TODO(), k8sSecret.Name, metav1.DeleteOptions{})
 				if err != nil {
@@ -273,80 +245,100 @@ func kubernetesRemove(ripeSecrets []string, kubernetesSecretList *v1.SecretList,
 	}
 }
 
-func searchKubernetesForResults(ctx context.Context, Mysecret string, c config) {
+func SearchKubernetesForResults(ctx context.Context, Mysecret string, cfg config.Config) {
 	kubernetesMonitor := os.Getenv("KUBERNETESMONITOR")
 	if kubernetesMonitor == "true" {
-
-		watcher, err := c.Clientset.CoreV1().Secrets(c.destEnv).Watch(context.Background(), metav1.ListOptions{})
+		watcher, err := cfg.Clientset.CoreV1().Secrets(cfg.DestEnv).Watch(context.Background(), metav1.ListOptions{})
 		if err != nil {
 			jsonLogger.Error("searchKubernetesForResults timeout", "error", err)
 		}
-		for {
-			for event := range watcher.ResultChan() {
-				secretObject := event.Object.(*v1.Secret)
-
-				switch event.Type {
-				case watch.Added:
-					added <- secretObject.ObjectMeta.Name
-				}
-
+		for event := range watcher.ResultChan() {
+			secretObject := event.Object.(*v1.Secret)
+			switch event.Type {
+			case watch.Added:
+				Added <- secretObject.ObjectMeta.Name
 			}
 		}
-
 	}
 }
 
-func initKubernetesSearch(secret string, c config) {
-
+func InitKubernetesSearch(secret string, cfg config.Config) {
 	kubernetesMonitor := os.Getenv("KUBERNETESMONITOR")
 	if kubernetesMonitor == "true" {
-
 		ctx := context.Background()
 		ctxWithTimeout, cancel := context.WithTimeout(ctx, time.Duration(5)*time.Minute)
-		go searchKubernetesForResults(ctxWithTimeout, secret, c)
+		go SearchKubernetesForResults(ctxWithTimeout, secret, cfg)
 		defer cancel()
 	}
 }
 
-func monitorMessages(watchlist []string) {
+func MonitorMessages(watchlist []string) {
 	kubernetesMonitor := os.Getenv("KUBERNETESMONITOR")
 	if kubernetesMonitor == "true" {
-		jsonLogger.Info("Raven starting search for secret in namespace",
-			"action", "kubernetes.lookup.secret.start",
-			"secret", watchlist)
+		jsonLogger.Info("Raven starting search for secret in namespace", "action", "kubernetes.lookup.secret.start", "secret", watchlist)
 		for {
-			for i := 0; i < 1; i++ {
-				select {
-				case addedSecret := <-added:
-					if stringSliceContainsString(watchlist, addedSecret) {
-						jsonLogger.Info("Raven found secret in kubernetes namespace",
-							"action", "kubernetes.lookup.secret.success",
-							"secret", addedSecret)
-					}
+			select {
+			case addedSecret := <-Added:
+				if helpers.StringSliceContainsString(watchlist, addedSecret) {
+					jsonLogger.Info("Raven found secret in kubernetes namespace", "action", "kubernetes.lookup.secret.success", "secret", addedSecret)
 				}
 			}
 		}
 	}
 }
 
+// CreateK8sSecret builds an in-memory Kubernetes Secret from a Vault secret.
+//
+// sourcePath is the original (un-sanitized) Vault secret path, e.g.
+// "nt/middlearth-aws-resource-viewer-credentials-prod". It is sanitized via
+// helpers.SanitizeK8sName to produce metadata.name (so the resource name is
+// always a valid RFC 1123 DNS subdomain), and the original value is preserved
+// in the annotation helpers.AnnotationSourcePath for diagnostics and
+// collision detection.
+func CreateK8sSecret(sourcePath string, cfg config.Config, dataFields *api.Secret) v1.Secret {
+	name := helpers.SanitizeK8sName(sourcePath)
+	Annotations := ApplyAnnotations(dataFields, cfg)
+	Annotations[helpers.AnnotationSourcePath] = sourcePath
+	data, stringdata := ApplyDatafieldsTok8sSecret(dataFields, Annotations, name, cfg.DocumentationKeys)
+	Annotations = ApplyMetadata(dataFields, Annotations)
+	ravenLabels := ApplyRavenLabels()
+
+	SecretContent := config.SecretContents{StringData: stringdata, Data: data, Annotations: Annotations, Name: name, Labels: ravenLabels}
+	secret := NewSecretWithContents(SecretContent, cfg)
+	jsonLogger.Debug("createK8sSecret: made k8s secret object",
+		"typeMeta", secret.TypeMeta,
+		"objectMeta", secret.ObjectMeta,
+		"data", data,
+		"stringData", stringdata,
+		"secret", secret)
+	return secret
+}
+
+// Watcher methods
+
 func (app *Watcher) CheckKubernetesServiceAccountPermissions() bool {
-
 	ctx := context.Background()
-
 	verbs := []string{"get", "watch", "list", "update", "patch"}
-	resources := []string{"secrets", "deployments", "statefulsets"}
+	type resourceCheck struct {
+		group    string
+		resource string
+	}
+	checks := []resourceCheck{
+		{"", "secrets"},
+		{"apps", "deployments"},
+		{"apps", "statefulsets"},
+	}
 
 	ssars := []*authorization.SelfSubjectAccessReview{}
-
 	for _, verb := range verbs {
-		for _, resource := range resources {
+		for _, rc := range checks {
 			ssar := &authorization.SelfSubjectAccessReview{
 				Spec: authorization.SelfSubjectAccessReviewSpec{
 					ResourceAttributes: &authorization.ResourceAttributes{
 						Namespace: app.Namespace,
 						Verb:      verb,
-						Group:     "*",
-						Resource:  resource,
+						Group:     rc.group,
+						Resource:  rc.resource,
 					},
 				},
 			}
@@ -364,7 +356,10 @@ func (app *Watcher) CheckKubernetesServiceAccountPermissions() bool {
 		if ssar.Status.Allowed {
 			decision = true
 		} else {
-			jsonLogger.Error("Service account not allowed to perform action", slog.String("namespace", app.Namespace), slog.Any("permissions", ssar.Status), slog.Any("ssar", ssar.Status.Reason), slog.Any("ResourceAttributes", ssar.Spec.ResourceAttributes), slog.Any("verb", ssar.Spec.ResourceAttributes.Verb), slog.Any("resource", ssar.Spec.ResourceAttributes.Resource))
+			jsonLogger.Error("Service account not allowed to perform action",
+				slog.String("namespace", app.Namespace),
+				slog.Any("verb", ssar.Spec.ResourceAttributes.Verb),
+				slog.Any("resource", ssar.Spec.ResourceAttributes.Resource))
 		}
 	}
 	return decision
@@ -372,14 +367,12 @@ func (app *Watcher) CheckKubernetesServiceAccountPermissions() bool {
 
 func (app *Watcher) MonitorNamespaceForSecretChange() {
 	ctx := context.Background()
-
 	jsonLogger.Info("Started monitoring for secrets in kubernetes", slog.String("namespace", app.Namespace))
 	if app.ClientSet != nil {
 		theSecretWatcher, err := app.ClientSet.CoreV1().Secrets(app.Namespace).Watch(ctx, metav1.ListOptions{})
 		if err != nil {
 			jsonLogger.Error("Failed to watch for secrets", slog.String("error", err.Error()), slog.String("namespace", app.Namespace))
 		}
-
 		go app.handleSecretEvents(theSecretWatcher, ctx)
 	}
 }
@@ -411,9 +404,19 @@ func (app *Watcher) handleSecretEvent(secret *corev1.Secret, eventType watch.Eve
 
 	switch eventType {
 	case watch.Added, watch.Modified:
+		op := "k8s-added"
+		if eventType == watch.Modified {
+			op = "k8s-modified"
+		}
+		if app.OnEvent != nil {
+			app.OnEvent(K8sEvent{Type: op, Secret: secret.Name, Namespace: secret.Namespace, Message: "secret " + string(eventType) + " in cluster"})
+		}
 		app.checkResources(secret, string(eventType), ctx)
 	case watch.Deleted:
-		jsonLogger.Info("secret was deleted", slog.String("secret", secret.Name), slog.String("namespace", secret.Namespace), slog.String("type", "deleted"))
+		jsonLogger.Info("secret was deleted", slog.String("secret", secret.Name), slog.String("namespace", secret.Namespace))
+		if app.OnEvent != nil {
+			app.OnEvent(K8sEvent{Type: "k8s-deleted", Secret: secret.Name, Namespace: secret.Namespace, Message: "secret removed from cluster"})
+		}
 	}
 }
 
@@ -421,9 +424,7 @@ func (app *Watcher) checkResources(secret *corev1.Secret, eventType string, ctx 
 	if secret == nil {
 		return
 	}
-	jsonLogger.Info("Secret event", slog.String("secret", secret.Name), slog.String("namespace", secret.Namespace), slog.String("eventType", eventType))
 	jsonLogger.Info("Checking resources", slog.String("secret", secret.Name), slog.String("namespace", secret.Namespace), slog.String("eventType", eventType))
-
 	app.checkStatefulSets(secret, eventType, ctx)
 	app.checkDeployments(secret, eventType, ctx)
 }
@@ -433,7 +434,6 @@ func (app *Watcher) checkStatefulSets(secret *corev1.Secret, eventType string, c
 	for _, stateful := range allStateFulSets.Items {
 		for _, v := range stateful.Spec.Template.Spec.Volumes {
 			if v.Secret != nil && v.Secret.SecretName == secret.Name {
-				jsonLogger.Info("Found match in statefulset", slog.String("secret", secret.Name), slog.String("namespace", secret.Namespace), slog.String("eventType", eventType), slog.String("UID", string(secret.ObjectMeta.UID)))
 				app.TriggerRollout(nil, &stateful, secret)
 			}
 		}
@@ -445,7 +445,6 @@ func (app *Watcher) checkDeployments(secret *corev1.Secret, eventType string, ct
 	for _, dep := range allDeployments.Items {
 		for _, v := range dep.Spec.Template.Spec.Volumes {
 			if v.Secret != nil && v.Secret.SecretName == secret.Name {
-				jsonLogger.Info("Found match in Deployment", slog.String("secret", secret.Name), slog.String("namespace", secret.Namespace), slog.String("eventType", eventType), slog.String("UID", string(secret.ObjectMeta.UID)))
 				app.TriggerRollout(&dep, nil, secret)
 			}
 		}
@@ -457,16 +456,20 @@ func (app *Watcher) TriggerRollout(deployment *appsv1.Deployment, statefulset *a
 		deployment = app.updateDeploymentAnnotations(deployment, secret)
 		_, err := app.ClientSet.AppsV1().Deployments(app.Namespace).Update(context.Background(), deployment, metav1.UpdateOptions{})
 		if err != nil {
-			jsonLogger.Error("failed to update deployment", slog.String("error", err.Error()), slog.String("deployment", deployment.Name), slog.String("namespace", deployment.Namespace))
+			jsonLogger.Error("failed to update deployment", slog.String("error", err.Error()), slog.String("deployment", deployment.Name))
+		} else if app.OnEvent != nil {
+			app.OnEvent(K8sEvent{Type: "k8s-rollout", Secret: secret.Name, Namespace: secret.Namespace, Message: "rollout restart: deployment/" + deployment.Name})
 		}
-		jsonLogger.Info("Rollout restart triggered for deployment in namespace", slog.String("deployment", deployment.Name), slog.String("namespace", deployment.Namespace))
+		jsonLogger.Info("Rollout restart triggered for deployment", slog.String("deployment", deployment.Name), slog.String("namespace", deployment.Namespace))
 	} else if statefulset != nil {
 		statefulset = app.updateStatefulSetAnnotations(statefulset, secret)
 		_, err := app.ClientSet.AppsV1().StatefulSets(app.Namespace).Update(context.Background(), statefulset, metav1.UpdateOptions{})
 		if err != nil {
-			jsonLogger.Error("failed to update statefulset", slog.String("error", err.Error()), slog.String("deployment", statefulset.Name), slog.String("namespace", statefulset.Namespace))
+			jsonLogger.Error("failed to update statefulset", slog.String("error", err.Error()), slog.String("statefulset", statefulset.Name))
+		} else if app.OnEvent != nil {
+			app.OnEvent(K8sEvent{Type: "k8s-rollout", Secret: secret.Name, Namespace: secret.Namespace, Message: "rollout restart: statefulset/" + statefulset.Name})
 		}
-		jsonLogger.Info("Rollout restart triggered for statefulset in namespace", slog.String("statefulSet", statefulset.Name), slog.String("namespace", statefulset.Namespace))
+		jsonLogger.Info("Rollout restart triggered for statefulset", slog.String("statefulSet", statefulset.Name), slog.String("namespace", statefulset.Namespace))
 	}
 }
 
@@ -492,36 +495,4 @@ func (app *Watcher) updateStatefulSetAnnotations(statefulset *appsv1.StatefulSet
 		statefulset.Spec.Template.ObjectMeta.Annotations["norsk-tipping.no/lastUUIDTriggeredRestart"] = string(secret.ObjectMeta.UID)
 	}
 	return statefulset
-}
-
-/*
-scaffolding for k8s,
-createK8sSecret generates k8s secrets based on inputs:
-- name: name of secret
-- Namespace: k8s namespace
-- datafield: data for secret
-returns v1.Secret for consumption by SealedSecret
-*/
-func createK8sSecret(sourcePath string, config config, dataFields *api.Secret) (secret v1.Secret) {
-	// Sanitize the Vault path into a valid RFC 1123 DNS subdomain so the
-	// resulting Kubernetes / SealedSecret resource name is always accepted
-	// by the API server. The original path is preserved in an annotation
-	// for diagnostics and collision detection (see internal/api/handler.go).
-	name := helpers.SanitizeK8sName(sourcePath)
-	Annotations := applyAnnotations(dataFields, config)
-	Annotations[helpers.AnnotationSourcePath] = sourcePath
-	data, stringdata := applyDatafieldsTok8sSecret(dataFields, Annotations, name)
-	Annotations = applyMetadata(dataFields, Annotations)
-	ravenLabels := applyRavenLabels()
-
-	SecretContent := SecretContents{stringdata: stringdata, data: data, Annotations: Annotations, name: name, Labels: ravenLabels}
-	secret = NewSecretWithContents(SecretContent, config)
-	jsonLogger.Debug("createK8sSecret: made k8s secret object",
-		"typeMeta", secret.TypeMeta,
-		"objectMeta", secret.ObjectMeta,
-		"data", data,
-		"stringData", stringdata,
-		"secret", secret)
-	return
-
 }

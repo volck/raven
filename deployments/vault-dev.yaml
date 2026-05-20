@@ -1,0 +1,112 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: logparser-config
+  namespace: ssg
+data:
+  config.json: |
+    {
+      "audit_log_path": "/var/log/vault/audit.log",
+      "secret_engines": ["testdeployment"],
+      "routing": {
+        "testdeployment": "https://ssg-kubernetes-vault-test-ssg.apps.ocpdq02.norsk-tipping.no"
+      },
+      "oidc": {},
+      "state_file": "/tmp/logparser-offset",
+      "debounce_window": "2s"
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vault-dev
+  namespace: ssg
+  labels:
+    app: vault-dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vault-dev
+  template:
+    metadata:
+      labels:
+        app: vault-dev
+    spec:
+      containers:
+      - name: vault
+        image: hashicorp/vault:1.15
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          vault server -dev -dev-root-token-id=root -dev-listen-address=0.0.0.0:8200 &
+          VAULT_PID=$!
+          export VAULT_ADDR=http://127.0.0.1:8200
+          sleep 3
+          vault secrets enable -path=testdeployment kv-v2 || true
+          vault kv put testdeployment/hello username=admin password=s3cret || true
+          mkdir -p /var/log/vault
+          vault audit enable file file_path=/var/log/vault/audit.log log_raw=true || true
+          echo "Vault ready with audit log enabled"
+          wait $VAULT_PID
+        ports:
+        - containerPort: 8200
+          name: http
+        env:
+        - name: VAULT_API_ADDR
+          value: "http://0.0.0.0:8200"
+        - name: SKIP_SETCAP
+          value: "true"
+        - name: VAULT_DISABLE_MLOCK
+          value: "true"
+        securityContext:
+          runAsNonRoot: true
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+        volumeMounts:
+        - name: audit-log
+          mountPath: /var/log/vault
+      - name: logparser
+        image: image-registry.openshift-image-registry.svc:5000/ssg/ravenlogparser:latest
+        env:
+        - name: LOGPARSER_CONFIG
+          value: /etc/logparser/config.json
+        volumeMounts:
+        - name: audit-log
+          mountPath: /var/log/vault
+          readOnly: true
+        - name: logparser-config
+          mountPath: /etc/logparser
+        resources:
+          requests:
+            cpu: 25m
+            memory: 32Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
+      volumes:
+      - name: audit-log
+        emptyDir: {}
+      - name: logparser-config
+        configMap:
+          name: logparser-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault-dev
+  namespace: ssg
+  labels:
+    app: vault-dev
+spec:
+  selector:
+    app: vault-dev
+  ports:
+  - name: http
+    port: 8200
+    targetPort: 8200
