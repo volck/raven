@@ -14,9 +14,9 @@ import (
 
 // fakeSource is a minimal in-memory Source for testing the Provider.
 type fakeSource struct {
-	loads   int
-	cfgs    []RoutingConfig // sequence of configs to return on each Load
-	errs    []error         // sequence of errors (same length as cfgs)
+	loads int
+	cfgs  []RoutingConfig // sequence of configs to return on each Load
+	errs  []error         // sequence of errors (same length as cfgs)
 }
 
 func (f *fakeSource) Load(ctx context.Context) (RoutingConfig, error) {

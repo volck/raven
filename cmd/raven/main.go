@@ -237,6 +237,12 @@ func handleRequests(cfg config.Config, vaultClient *api.Client) *ravenapi.Secret
 	// Pipeline lifecycle API
 	mux.HandleFunc("/api/v1/pipeline", ravenapi.PipelineHandler(cfg, secretHandler))
 
+	// Read-only events API — consumed by flock for aggregation
+	mux.Handle("/api/v1/events", secretHandler.EventsHandler())
+
+	// Read-only status API — bundles config + sync timing + secrets + event count.
+	mux.Handle("/api/v1/status", secretHandler.StatusHandler())
+
 	helpers.JsonLogger.Info("Starting HTTP server on :8080")
 	srv := &http.Server{
 		Addr:         ":8080",
@@ -453,5 +459,3 @@ func synchronizeVaultSecrets(secretList []interface{}, client *api.Client, cfg c
 		}
 	}
 }
-
-

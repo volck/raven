@@ -1,0 +1,12 @@
+# Minimal runtime image for raven-flock. The binary is built outside via
+# `task build:flock:binary` (static linux/amd64) and copied in. This avoids
+# requiring a Go toolchain in the OpenShift BuildConfig.
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
+
+RUN microdnf install -y ca-certificates && microdnf clean all
+
+COPY bin/raven-flock /usr/local/bin/raven-flock
+
+USER 1001
+EXPOSE 8080
+ENTRYPOINT ["/usr/local/bin/raven-flock"]

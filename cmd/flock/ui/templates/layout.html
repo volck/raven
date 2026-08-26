@@ -1,0 +1,28 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{.Title}} — flock</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">flock</a>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/api/v1/status">JSON API</a>
+    <a href="/api/v1/all">/all</a>
+    <a href="/healthz">healthz</a>
+  </nav>
+  <span class="live" id="live" title="WebSocket status">●</span>
+</header>
+<main>
+{{template "content" .}}
+</main>
+<footer>
+  <small class="muted">raven fleet · this UI consumes flock's own JSON API</small>
+</footer>
+<script src="/static/app.js"></script>
+</body>
+</html>
+{{end}}
