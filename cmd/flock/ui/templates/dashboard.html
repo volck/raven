@@ -1,0 +1,20 @@
+{{define "content"}}
+<h1>Fleet</h1>
+<p class="muted">{{len .Engines}} engine(s) · {{.TargetCount}} target(s)</p>
+
+<div class="grid">
+{{range .Engines}}
+  <a class="card status-{{.Worst}}" href="/ui/engines/{{.Name}}">
+    <h2>{{.Name}}</h2>
+    <dl>
+      <dt>Targets</dt><dd>{{len .Targets}}</dd>
+      <dt>Secrets</dt><dd>{{.SecretCount}}</dd>
+      <dt>Status</dt><dd>{{.Worst}}</dd>
+    </dl>
+    {{if .LastError}}<p class="err">{{.LastError}}</p>{{end}}
+  </a>
+{{else}}
+  <p>No engines known yet. Is flock ready?</p>
+{{end}}
+</div>
+{{end}}

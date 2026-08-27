@@ -9,6 +9,7 @@ User=vault
 Group=vault
 ExecStart=/usr/local/bin/raven-logparser
 Environment=LOGPARSER_CONFIG=/etc/raven/logparser.json
+Environment=HTTP_ADDR=0.0.0.0:8080
 Environment=OIDC_CLIENT_SECRET=
 Restart=on-failure
 RestartSec=5

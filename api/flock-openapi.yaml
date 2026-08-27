@@ -1,0 +1,453 @@
+openapi: 3.0.3
+info:
+  title: raven-flock
+  description: |
+    Read-only meta aggregator for `raven` instances.
+
+    flock pulls the engine list and routing table from a single upstream
+    `raven-logparser` and probes every routed raven `/healthz`. It exposes
+    cached aggregate views via the endpoints below. There are no write
+    endpoints; all changes flow through the logparser's git source of truth.
+  version: 0.1.0
+  license:
+    name: GPL-2.0
+servers:
+  - url: http://localhost:8080
+    description: local dev
+paths:
+  /healthz:
+    get:
+      summary: Liveness probe
+      description: Always returns 200 once the process is up. Independent of upstream state.
+      responses:
+        "200":
+          description: alive
+          content:
+            text/plain:
+              schema: { type: string, example: "ok" }
+  /readyz:
+    get:
+      summary: Readiness probe
+      description: 200 once the Provider has loaded an initial snapshot from logparser; 503 before.
+      responses:
+        "200":
+          description: ready
+          content:
+            text/plain:
+              schema: { type: string, example: "ready" }
+        "503":
+          description: not yet ready
+  /api/v1/ravens:
+    get:
+      summary: List known raven engines
+      responses:
+        "200":
+          description: engine names
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: string }
+                example: ["dev", "prod01"]
+        "503": { $ref: "#/components/responses/NotReady" }
+  /api/v1/ravens/{name}:
+    get:
+      summary: List raven targets for an raven engine
+      parameters:
+        - $ref: "#/components/parameters/Name"
+      responses:
+        "200":
+          description: target URLs
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: string, format: uri }
+                example: ["https://r1.example", "https://r2.example"]
+        "404": { description: engine unknown }
+        "503": { $ref: "#/components/responses/NotReady" }
+  /api/v1/ravens/{name}/health:
+    get:
+      summary: Per-target health for an raven engine
+      parameters:
+        - $ref: "#/components/parameters/Name"
+      responses:
+        "200":
+          description: per-target health entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TargetHealth" }
+        "404": { description: engine unknown }
+        "503": { $ref: "#/components/responses/NotReady" }
+  /api/v1/ravens/{name}/events:
+    get:
+      summary: Aggregated events from every raven serving this engine
+      description: |
+        Flock periodically polls /api/v1/events on each raven and caches the
+        results. This endpoint returns the cached events for the targets that
+        serve the named engine, newest first.
+      parameters:
+        - $ref: "#/components/parameters/Name"
+      responses:
+        "200":
+          description: aggregated events, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TargetEvent" }
+        "404": { description: engine unknown }
+        "503": { $ref: "#/components/responses/NotReady" }
+  /api/v1/health:
+    get:
+      summary: Aggregate per-target health across all engines
+      responses:
+        "200":
+          description: every probed target's last result
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TargetHealth" }
+        "503": { $ref: "#/components/responses/NotReady" }
+  /api/v1/events:
+    get:
+      summary: Aggregated events from every known raven, newest first
+      description: |
+        Flock periodically polls /api/v1/events on each raven. This endpoint
+        returns the union of cached events across every target, sorted by
+        event time descending.
+      responses:
+        "200":
+          description: aggregated events, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TargetEvent" }
+        "503": { $ref: "#/components/responses/NotReady" }
+  /api/v1/ravens/{name}/status:
+    get:
+      summary: Bundled status payloads for every target serving the named engine
+      parameters:
+        - $ref: "#/components/parameters/Name"
+      responses:
+        "200":
+          description: per-target status
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TargetStatus" }
+        "404": { description: engine unknown }
+        "503": { $ref: "#/components/responses/NotReady" }
+  /api/v1/ravens/{name}/inventory:
+    get:
+      summary: Flat list of every secret across all targets serving the named engine
+      parameters:
+        - $ref: "#/components/parameters/Name"
+      responses:
+        "200":
+          description: inventory rows
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/InventoryEntry" }
+        "404": { description: engine unknown }
+        "503": { $ref: "#/components/responses/NotReady" }
+  /api/v1/ravens/{name}/secrets/{secret}:
+    get:
+      summary: Per-secret state across all targets serving the named engine
+      parameters:
+        - $ref: "#/components/parameters/Name"
+        - name: secret
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: one row per target
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/InventoryEntry" }
+        "404": { description: engine or secret unknown }
+        "503": { $ref: "#/components/responses/NotReady" }
+  /api/v1/status:
+    get:
+      summary: Bundled status payloads across every known raven
+      responses:
+        "200":
+          description: per-target status
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TargetStatus" }
+        "503": { $ref: "#/components/responses/NotReady" }
+  /api/v1/inventory:
+    get:
+      summary: Flat list of every secret across every raven
+      responses:
+        "200":
+          description: inventory rows
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/InventoryEntry" }
+        "503": { $ref: "#/components/responses/NotReady" }
+  /api/v1/ravens/{name}/pipeline:
+    get:
+      summary: Per-target pipeline state for every target serving the named engine
+      parameters:
+        - $ref: "#/components/parameters/Name"
+      responses:
+        "200":
+          description: per-target pipeline payloads
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TargetPipeline" }
+        "404": { description: engine unknown }
+        "503": { $ref: "#/components/responses/NotReady" }
+  /api/v1/ravens/{name}/pipeline/{secret}:
+    get:
+      summary: Pipeline state for one secret across all targets of the engine
+      parameters:
+        - $ref: "#/components/parameters/Name"
+        - name: secret
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: one row per target
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PipelineSecretRow" }
+        "404": { description: engine or secret unknown }
+        "503": { $ref: "#/components/responses/NotReady" }
+  /ws:
+    get:
+      summary: WebSocket fan-out of every raven's live event stream
+      description: |
+        Upgrades to a WebSocket and streams `FleetMessage` envelopes — every
+        message broadcast by any raven (`event`, `sync_status`, …), tagged
+        with the source `target` and `engine`. Flock maintains one upstream
+        WebSocket per raven and reconnects with backoff. Messages are
+        text JSON frames; no client-to-server messages are required.
+
+        OpenAPI 3.0 does not model WebSockets natively; this entry documents
+        the upgrade endpoint and message schema only.
+      responses:
+        "101":
+          description: Switching Protocols — WebSocket established
+        "503": { $ref: "#/components/responses/NotReady" }
+  /api/v1/all:
+    get:
+      summary: Combined snapshot
+      description: Engines + routing + cached health in a single response.
+      responses:
+        "200":
+          description: combined snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [engines, routing, health]
+                properties:
+                  engines:
+                    type: array
+                    items: { type: string }
+                  routing:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items: { type: string, format: uri }
+                  health:
+                    type: object
+                    additionalProperties:
+                      $ref: "#/components/schemas/Health"
+        "503": { $ref: "#/components/responses/NotReady" }
+components:
+  parameters:
+    Name:
+      name: name
+      in: path
+      required: true
+      schema: { type: string }
+      description: raven engine name (e.g. dev, prod01).
+  responses:
+    NotReady:
+      description: flock has not yet loaded an initial snapshot from logparser
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string, example: "not ready" }
+  schemas:
+    Health:
+      type: object
+      properties:
+        Healthy: { type: boolean }
+        Error: { type: string }
+        CheckedAt: { type: string, format: date-time }
+    TargetHealth:
+      type: object
+      required: [target, healthy]
+      properties:
+        target: { type: string, format: uri }
+        healthy: { type: boolean }
+        error: { type: string }
+        checked_at: { type: string, format: date-time }
+    Event:
+      type: object
+      properties:
+        time: { type: string, format: date-time }
+        operation: { type: string, example: "update" }
+        engine: { type: string, example: "dev" }
+        path: { type: string, example: "kv/foo" }
+        status: { type: string, example: "ok" }
+        message: { type: string }
+    TargetEvent:
+      type: object
+      required: [target, event]
+      properties:
+        target:
+          type: string
+          format: uri
+          description: raven instance URL the event came from
+        event: { $ref: "#/components/schemas/Event" }
+    SyncSummary:
+      type: object
+      properties:
+        last_sync: { type: string, format: date-time }
+        next_sync: { type: string, format: date-time }
+        sleep_seconds: { type: integer }
+        overdue: { type: boolean }
+    SecretK8sState:
+      type: object
+      properties:
+        created: { type: string }
+        modified: { type: string }
+        source: { type: string }
+        deployments:
+          type: array
+          items: { type: string }
+        statefulsets:
+          type: array
+          items: { type: string }
+    SecretFile:
+      type: object
+      required: [name, secret_name]
+      properties:
+        name: { type: string }
+        secret_name: { type: string }
+        modified: { type: string, format: date-time }
+        k8s: { $ref: "#/components/schemas/SecretK8sState" }
+    Status:
+      type: object
+      properties:
+        engine: { type: string }
+        dest_env: { type: string }
+        vault_url: { type: string }
+        sync: { $ref: "#/components/schemas/SyncSummary" }
+        secrets:
+          type: array
+          items: { $ref: "#/components/schemas/SecretFile" }
+        secret_count: { type: integer }
+        event_count: { type: integer }
+        generated_at: { type: string, format: date-time }
+    TargetStatus:
+      type: object
+      required: [target, status]
+      properties:
+        target: { type: string, format: uri }
+        observed_at: { type: string, format: date-time }
+        status: { $ref: "#/components/schemas/Status" }
+    InventoryEntry:
+      type: object
+      required: [engine, target, name, secret_name]
+      properties:
+        engine: { type: string }
+        target: { type: string, format: uri }
+        name: { type: string }
+        secret_name: { type: string }
+        modified: { type: string, format: date-time }
+        k8s: { $ref: "#/components/schemas/SecretK8sState" }
+    PipelineStage:
+      type: object
+      properties:
+        name: { type: string }
+        status: { type: string, description: "ok | warn | fail | unknown" }
+        time: { type: string, format: date-time }
+        detail: { type: string }
+    PipelineEntry:
+      type: object
+      properties:
+        secret: { type: string }
+        engine: { type: string }
+        namespace: { type: string }
+        source: { type: string }
+        k8s_created: { type: string, format: date-time }
+        k8s_modified: { type: string, format: date-time }
+        data_keys:
+          type: array
+          items: { type: string }
+        deployments:
+          type: array
+          items: { type: string }
+        statefulsets:
+          type: array
+          items: { type: string }
+        stages:
+          type: array
+          items: { $ref: "#/components/schemas/PipelineStage" }
+    TargetPipeline:
+      type: object
+      required: [target, observed_at, entries]
+      properties:
+        target: { type: string, format: uri }
+        observed_at: { type: string, format: date-time }
+        entries:
+          type: array
+          items: { $ref: "#/components/schemas/PipelineEntry" }
+    PipelineSecretRow:
+      type: object
+      required: [target, observed_at, entry]
+      properties:
+        target: { type: string, format: uri }
+        observed_at: { type: string, format: date-time }
+        entry: { $ref: "#/components/schemas/PipelineEntry" }
+    FleetMessage:
+      type: object
+      description: |
+        One message frame on /ws. `data` is opaque to flock — it forwards
+        raven's original payload verbatim. Known `type` values include
+        `event` (a secret was created/updated/deleted) and `sync_status`
+        (a raven full-walk cycle completed).
+      required: [target, type, data]
+      properties:
+        target:
+          type: string
+          format: uri
+          description: raven instance URL the message came from
+        engine:
+          type: string
+          description: engine name routing to this target, if known
+        type: { type: string, example: "event" }
+        data:
+          description: raven's original message payload (opaque)
+        observed_at:
+          type: string
+          format: date-time
+          description: when flock received the message

@@ -1,0 +1,132 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: raven-flock
+  namespace: ssg
+  labels:
+    app: raven-flock
+spec:
+  selector:
+    app: raven-flock
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+  type: ClusterIP
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: raven-flock
+  namespace: ssg
+  labels:
+    app: raven-flock
+spec:
+  to:
+    kind: Service
+    name: raven-flock
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: raven-flock
+  namespace: ssg
+  labels:
+    app: raven-flock
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app: raven-flock
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: raven-flock
+    spec:
+      containers:
+        - name: raven-flock
+          image: image-registry.openshift-image-registry.svc:5000/ssg/raven-flock@sha256:42adbdb37a6b64aa5780654b6ef8940b4f6ba07919a5637b0a50831dd8dbcf88
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: HTTP_ADDR
+              value: "0.0.0.0:8080"
+            - name: LOGPARSER_URL
+              value: "http://p0vlt001.prod01.norsk-tipping.no:8080"
+            - name: POLL_INTERVAL
+              value: "30s"
+            - name: PROBE_INTERVAL
+              value: "10s"
+            - name: EVENT_INTERVAL
+              value: "5s"
+            - name: STATUS_INTERVAL
+              value: "5s"
+            - name: REFRESH_TIMEOUT
+              value: "15s"
+            - name: PROBE_TIMEOUT
+              value: "5s"
+            - name: EVENT_TIMEOUT
+              value: "5s"
+            - name: STATUS_TIMEOUT
+              value: "5s"
+            - name: LOG_LEVEL
+              value: "info"
+            - name: FLOCK_CA_FILE
+              value: "/tmp/cert/ca.crt"
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 15
+            timeoutSeconds: 2
+            failureThreshold: 4
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: ntrootcert
+              mountPath: /tmp/cert
+              readOnly: true
+      volumes:
+        - name: ntrootcert
+          secret:
+            secretName: ntrootcert
+            defaultMode: 420
+      terminationGracePeriodSeconds: 30

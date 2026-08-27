@@ -1,0 +1,67 @@
+{{define "content"}}
+<p><a href="/">← fleet</a></p>
+<h1>engine: {{.Engine}}</h1>
+
+<section class="events-panel">
+  <h2>Recent activity ({{len .Events}})</h2>
+  {{if .Events}}
+  <div class="events-scroll">
+    <table class="events">
+      <thead><tr><th>Time</th><th>Target</th><th>Op</th><th>Path</th><th>Status</th><th>Message</th></tr></thead>
+      <tbody>
+      {{range .Events}}
+        <tr class="status-{{.StatusClass}}">
+          <td><time>{{.Time}}</time></td>
+          <td><code>{{.Target}}</code></td>
+          <td>{{.Operation}}</td>
+          <td><code>{{.Path}}</code></td>
+          <td>{{.Status}}</td>
+          <td class="err">{{.Message}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}
+  <p class="muted">no recent events</p>
+  {{end}}
+</section>
+
+<div class="tabs" role="tablist">
+  <button class="tab active" role="tab" data-tab="targets">Targets ({{len .Targets}})</button>
+  <button class="tab" role="tab" data-tab="secrets">Secrets ({{len .Secrets}})</button>
+</div>
+
+<section class="tab-panel active" data-panel="targets">
+  <table>
+    <thead><tr><th>Target</th><th>Health</th><th>Last commit</th><th>Last error</th><th>Observed</th></tr></thead>
+    <tbody>
+    {{range .Targets}}
+      <tr class="status-{{.HealthClass}}">
+        <td><code>{{.URL}}</code></td>
+        <td>{{.HealthLabel}}</td>
+        <td><code>{{.LastCommit}}</code></td>
+        <td class="err">{{.LastError}}</td>
+        <td><time>{{.ObservedAt}}</time></td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+</section>
+
+<section class="tab-panel" data-panel="secrets">
+  <input id="filter" type="search" placeholder="filter…" oninput="filterRows(this.value)">
+  <table id="secrets">
+    <thead><tr><th>Name</th><th>Targets</th><th>K8s state</th></tr></thead>
+    <tbody>
+    {{range .Secrets}}
+      <tr>
+        <td><a href="/ui/engines/{{$.Engine}}/secrets/{{.Name}}">{{.Name}}</a></td>
+        <td>{{.TargetCount}}</td>
+        <td>{{.K8sLabel}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+</section>
+{{end}}

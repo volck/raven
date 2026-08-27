@@ -497,6 +497,181 @@ func HealthzHandler() http.Handler {
 	})
 }
 
+// EventsHandler returns a read-only JSON list of recent SyncEvents. Newest
+// first. Intended for machine consumption (e.g. flock aggregation).
+func (h *SecretEventHandler) EventsHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		events := h.RecentEvents()
+		if events == nil {
+			events = []SyncEvent{}
+		}
+		if err := json.NewEncoder(w).Encode(events); err != nil {
+			jsonLogger.Error("events: encode failed", "error", err)
+		}
+	})
+}
+
+// StatusInfo is a JSON-friendly snapshot of everything the dashboard
+// renders for this raven. Consumed by flock for aggregation.
+type StatusInfo struct {
+	Engine      string       `json:"engine"`
+	DestEnv     string       `json:"dest_env"`
+	VaultURL    string       `json:"vault_url"`
+	Sync        SyncSummary  `json:"sync"`
+	Secrets     []SecretFile `json:"secrets"`
+	SecretCount int          `json:"secret_count"`
+	EventCount  int          `json:"event_count"`
+	GeneratedAt time.Time    `json:"generated_at"`
+}
+
+// SyncSummary is the dashboard's sync timing block, machine-readable.
+type SyncSummary struct {
+	LastSync     time.Time `json:"last_sync"`
+	NextSync     time.Time `json:"next_sync"`
+	SleepSeconds int       `json:"sleep_seconds"`
+	Overdue      bool      `json:"overdue"`
+}
+
+// SecretFile is a gitops-managed secret yaml with its current K8s state
+// (if a matching Secret exists in the target namespace).
+type SecretFile struct {
+	Name       string          `json:"name"`
+	SecretName string          `json:"secret_name"`
+	Modified   time.Time       `json:"modified"`
+	K8s        *SecretK8sState `json:"k8s,omitempty"`
+}
+
+// SecretK8sState captures what we know about a gitops secret as it exists
+// in the destination K8s namespace.
+type SecretK8sState struct {
+	Created      string   `json:"created,omitempty"`
+	Modified     string   `json:"modified,omitempty"`
+	Source       string   `json:"source,omitempty"`
+	Deployments  []string `json:"deployments,omitempty"`
+	StatefulSets []string `json:"statefulsets,omitempty"`
+}
+
+// StatusHandler returns the bundled status payload (engine config, sync
+// timing, secret list, event count). Read-only.
+func (h *SecretEventHandler) StatusHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		var secrets []SecretFile
+		secretCount := 0
+		files, err := gitops.GetBaseListOfFiles(h.cfg)
+		if err == nil {
+			secrets = make([]SecretFile, 0, len(files))
+			for _, f := range files {
+				name := f.Name()
+				secrets = append(secrets, SecretFile{
+					Name:       name,
+					SecretName: strings.TrimSuffix(name, ".yaml"),
+					Modified:   f.ModTime(),
+				})
+			}
+			secretCount = len(secrets)
+		}
+
+		// Join with K8s state when a clientset is configured. Best-effort —
+		// failures here just leave SecretFile.K8s nil.
+		if h.cfg.Clientset != nil {
+			joinK8sState(r.Context(), h.cfg, secrets)
+		}
+
+		sync := h.GetSyncStatus()
+		summary := SyncSummary{
+			LastSync:     sync.LastSync,
+			NextSync:     sync.NextSync,
+			SleepSeconds: sync.SleepSeconds,
+		}
+		if !sync.NextSync.IsZero() {
+			summary.Overdue = time.Now().After(sync.NextSync)
+		}
+
+		eventCount := 0
+		if h.eventStore != nil {
+			if c, err := h.eventStore.Count(); err == nil {
+				eventCount = c
+			}
+		} else {
+			h.eventsMu.RLock()
+			eventCount = len(h.recentEvents)
+			h.eventsMu.RUnlock()
+		}
+
+		out := StatusInfo{
+			Engine:      h.cfg.SecretEngine,
+			DestEnv:     h.cfg.DestEnv,
+			VaultURL:    h.cfg.VaultEndpoint,
+			Sync:        summary,
+			Secrets:     secrets,
+			SecretCount: secretCount,
+			EventCount:  eventCount,
+			GeneratedAt: time.Now(),
+		}
+		if err := json.NewEncoder(w).Encode(out); err != nil {
+			jsonLogger.Error("status: encode failed", "error", err)
+		}
+	})
+}
+
+// joinK8sState mutates `secrets` in place, attaching SecretK8sState to each
+// entry whose SecretName matches a raven-labeled K8s Secret in the dest
+// namespace. Errors are swallowed: nil K8s field == "unknown".
+func joinK8sState(ctx context.Context, cfg config.Config, secrets []SecretFile) {
+	secretList, err := k8s.KubernetesSecretList(cfg.Clientset, cfg.DestEnv)
+	if err != nil || secretList == nil {
+		return
+	}
+	deps, _ := cfg.Clientset.AppsV1().Deployments(cfg.DestEnv).List(ctx, metav1.ListOptions{})
+	stss, _ := cfg.Clientset.AppsV1().StatefulSets(cfg.DestEnv).List(ctx, metav1.ListOptions{})
+
+	byName := make(map[string]*SecretK8sState, len(secretList.Items))
+	for _, s := range secretList.Items {
+		if !k8s.Hask8sRavenLabel(s) {
+			continue
+		}
+		created := s.CreationTimestamp.Format("2006-01-02 15:04:05")
+		modified := created
+		for _, mf := range s.ManagedFields {
+			if mf.Time != nil && mf.Time.Time.After(s.CreationTimestamp.Time) {
+				modified = mf.Time.Format("2006-01-02 15:04:05")
+			}
+		}
+		st := &SecretK8sState{
+			Created:  created,
+			Modified: modified,
+			Source:   s.Annotations["source"],
+		}
+		if deps != nil {
+			for _, d := range deps.Items {
+				for _, v := range d.Spec.Template.Spec.Volumes {
+					if v.Secret != nil && v.Secret.SecretName == s.Name {
+						st.Deployments = append(st.Deployments, d.Name)
+					}
+				}
+			}
+		}
+		if stss != nil {
+			for _, ss := range stss.Items {
+				for _, v := range ss.Spec.Template.Spec.Volumes {
+					if v.Secret != nil && v.Secret.SecretName == s.Name {
+						st.StatefulSets = append(st.StatefulSets, ss.Name)
+					}
+				}
+			}
+		}
+		byName[s.Name] = st
+	}
+	for i := range secrets {
+		if st, ok := byName[secrets[i].SecretName]; ok {
+			secrets[i].K8s = st
+		}
+	}
+}
+
 // K8sSecretInfo represents a Raven-managed secret found in the K8s namespace.
 type K8sSecretInfo struct {
 	Name         string   `json:"name"`
@@ -806,20 +981,20 @@ func PipelineHandler(cfg config.Config, events *SecretEventHandler) http.Handler
 // the caller should err on the side of treating it as no-collision (logs the
 // error elsewhere) rather than silently blocking writes.
 func readSourcePathAnnotation(path string) (string, error) {
-data, err := os.ReadFile(path)
-if err != nil {
-if os.IsNotExist(err) {
-return "", nil
-}
-return "", err
-}
-var doc struct {
-Metadata struct {
-Annotations map[string]string `json:"annotations"`
-} `json:"metadata"`
-}
-if err := yaml.Unmarshal(data, &doc); err != nil {
-return "", err
-}
-return doc.Metadata.Annotations[helpers.AnnotationSourcePath], nil
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	var doc struct {
+		Metadata struct {
+			Annotations map[string]string `json:"annotations"`
+		} `json:"metadata"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return "", err
+	}
+	return doc.Metadata.Annotations[helpers.AnnotationSourcePath], nil
 }

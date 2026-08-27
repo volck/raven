@@ -2,7 +2,7 @@
 set -euo pipefail
 
 NAMESPACE="ssg"
-IMAGE="image-registry.openshift-image-registry.svc:5000/ssg/ravenunstable@sha256:3754e8dafcb1ec4488332249e3deb7a9243f903e68c0fafcd3d183cd0285a677"
+IMAGE="image-registry.openshift-image-registry.svc:5000/ssg/ravenunstable@sha256:48956b7ce003b4fe5409122eefc3bd94b129f329bd4abcfb8bd8e1cd3e0a0347"
 SLEEP_TIME="3600"
 SA="ssg-dev-cleaner"
 OIDC_ISSUER_URL="https://auth.dev.norsk-tipping.no/auth/realms/vault"
@@ -45,9 +45,39 @@ for dep in $deployments; do
     "KUBERNETESMONITOR=true" \
     "KUBERNETESREMOVE=true" \
     "KUBERNETES_ROLLOUT=true" \
+    "RAVEN_DB_PATH=/data/raven-events.db" \
     "ARGOCD_SYNC_ENABLED=$ARGOCD_SYNC_ENABLED" \
     "ARGOCD_SERVER=$ARGOCD_SERVER" \
     "ARGOCD_APP_NAME=$ARGOCD_APP_NAME"
+
+  # 2a. Per-raven PersistentVolumeClaim so the SQLite event store survives
+  # restarts. Idempotent — PVC reused on subsequent runs.
+  pvc="${dep}-events"
+  if ! oc get pvc "$pvc" -n "$NAMESPACE" &>/dev/null; then
+    cat <<EOF | oc apply -f -
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: $pvc
+  namespace: $NAMESPACE
+  labels:
+    app: $dep
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+EOF
+    echo "  PVC created: $pvc"
+  else
+    echo "  PVC already exists: $pvc"
+  fi
+
+  # 2b. Mount the PVC at /data. Idempotent: oc set volume —overwrite replaces
+  # any prior definition with the same name.
+  oc set volume "deployment/$dep" -n "$NAMESPACE" \
+    --add --name=raven-data --type=persistentVolumeClaim \
+    --claim-name="$pvc" --mount-path=/data --overwrite
 
   # 2b. Mount ArgoCD bearer token from a K8s Secret (only if enabled and Secret exists).
   if [[ "$ARGOCD_SYNC_ENABLED" == "true" ]] && oc get secret "$ARGOCD_TOKEN_SECRET" -n "$NAMESPACE" &>/dev/null; then
