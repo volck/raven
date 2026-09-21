@@ -20,6 +20,7 @@ import (
 	"github.com/volck/raven/internal/flock"
 	lpclient "github.com/volck/raven/internal/flock/logparser"
 	rvclient "github.com/volck/raven/internal/flock/raven"
+	wrclient "github.com/volck/raven/internal/flock/wrangler"
 )
 
 func main() {
@@ -162,8 +163,36 @@ func run(
 		flock.WithPipelineAggregatorTimeout(pipelineTimeout),
 	)
 
+	// Wrangler is optional: flock runs without it, just without rollouts.
+	var rolloutCache *flock.RolloutCache
+	var rollouts RolloutSnapshotter
+	var deployments DeploymentFetcher
+	if wranglerURL := getenv("WRANGLER_URL"); wranglerURL != "" {
+		if err := flock.ValidateProxyURL(wranglerURL); err != nil {
+			return fmt.Errorf("WRANGLER_URL: %w", err)
+		}
+		rolloutInterval := parseDuration(getenv("ROLLOUT_INTERVAL"), 30*time.Second)
+		rolloutTimeout := parseDuration(getenv("ROLLOUT_TIMEOUT"), 10*time.Second)
+		wrc, err := wrclient.New(wranglerURL,
+			wrclient.WithLogger(logger.With("component", "wrangler-client")),
+			wrclient.WithRequestTimeout(rolloutTimeout),
+		)
+		if err != nil {
+			return fmt.Errorf("wrangler client: %w", err)
+		}
+		rolloutCache = flock.NewRolloutCache(wrc,
+			flock.WithRolloutLogger(logger.With("component", "rollout-cache")),
+			flock.WithRolloutInterval(rolloutInterval),
+			flock.WithRolloutTimeout(rolloutTimeout),
+		)
+		rollouts = rolloutCache
+		// Deployment status is fetched per request rather than polled: it is a
+		// point query the dashboard makes for one raven at a time.
+		deployments = wrc
+	}
+
 	ready := new(atomic.Bool)
-	srv := NewServer(logger, ready, provider, prober, aggregator, statusAgg, wsHub, pipelineAgg)
+	srv := NewServer(logger, ready, provider, prober, aggregator, statusAgg, wsHub, pipelineAgg, rollouts, deployments)
 
 	rootHandler := http.Handler(srv)
 	if getenv("FLOCK_TEST_SLOW_HANDLER") == "1" {
@@ -219,6 +248,10 @@ func run(
 	g.Go(func() error {
 		return pipelineAgg.Run(gctx, provider.Snapshot)
 	})
+	if rolloutCache != nil {
+		rolloutCache.RunOnce(gctx)
+		g.Go(func() error { return rolloutCache.Run(gctx) })
+	}
 
 	// Watch provider readiness and flip the atomic.Bool used by /readyz.
 	g.Go(func() error {
@@ -254,6 +287,9 @@ func run(
 				statusAgg.Trigger()
 				wsBridge.Reconcile(gctx, provider.Snapshot())
 				pipelineAgg.Trigger()
+				if rolloutCache != nil {
+					rolloutCache.Trigger()
+				}
 			}
 		}
 	})

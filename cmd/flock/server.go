@@ -77,9 +77,11 @@ func NewServer(
 	status StatusSnapshotter,
 	ws WSHandler,
 	pipeline PipelineSnapshotter,
+	rollouts RolloutSnapshotter,
+	deployments DeploymentFetcher,
 ) *Server {
 	mux := http.NewServeMux()
-	addRoutes(mux, logger, ready, snap, health, events, status, ws, pipeline)
+	addRoutes(mux, logger, ready, snap, health, events, status, ws, pipeline, rollouts, deployments)
 	renderer, err := ui.NewRenderer()
 	if err != nil {
 		// Templates are embedded at compile time; a parse failure is a
@@ -97,7 +99,7 @@ func NewServerBare(logger *slog.Logger, ready *atomic.Bool) *Server {
 	// Phase A /readyz test seeds an unready atomic.Bool; preserve that.
 	// Snap.Ready() always returns true, but /readyz is gated on the atomic.Bool
 	// not on snap.Ready, so the test still passes.
-	return NewServer(logger, ready, s, s, s, emptyStatus{}, nil, emptyPipeline{})
+	return NewServer(logger, ready, s, s, s, emptyStatus{}, nil, emptyPipeline{}, nil, nil)
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {

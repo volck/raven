@@ -277,6 +277,50 @@ paths:
                     additionalProperties:
                       $ref: "#/components/schemas/Health"
         "503": { $ref: "#/components/responses/NotReady" }
+  /api/v1/rollouts:
+    get:
+      summary: Recent raven provisioning attempts reported by flock-wrangler
+      description: >
+        Empty when no wrangler is configured (WRANGLER_URL unset) or when
+        wrangler has not been reachable yet.
+      responses:
+        "200":
+          description: recent rollouts, newest first
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Rollouts" }
+        "503": { $ref: "#/components/responses/NotReady" }
+  /api/v1/ravens/{name}/rollouts:
+    get:
+      summary: Provisioning attempts for one engine
+      parameters:
+        - $ref: "#/components/parameters/Name"
+      responses:
+        "200":
+          description: rollouts for the engine, newest first
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Rollouts" }
+        "404": { description: unknown engine }
+        "503": { $ref: "#/components/responses/NotReady" }
+  /api/v1/ravens/{name}/deployment:
+    get:
+      summary: Live workload state for one raven
+      description: >-
+        Proxied from flock-wrangler, which holds the cluster credentials flock
+        does not. Returns 503 when no wrangler is configured and 502 when it
+        cannot be reached.
+      parameters:
+        - $ref: "#/components/parameters/Name"
+      responses:
+        "200":
+          description: deployment and pod state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deployment" }
+        "404": { description: unknown engine, or wrangler manages no such raven }
+        "502": { description: wrangler unreachable }
+        "503": { description: flock not ready, or no wrangler configured }
 components:
   parameters:
     Name:
@@ -295,6 +339,80 @@ components:
             properties:
               error: { type: string, example: "not ready" }
   schemas:
+    Deployment:
+      type: object
+      properties:
+        name: { type: string, example: ssg-dev }
+        namespace: { type: string, example: ssg }
+        engine: { type: string, example: kv }
+        desired: { type: integer, format: int32 }
+        ready: { type: integer, format: int32 }
+        available: { type: integer, format: int32 }
+        updated: { type: integer, format: int32 }
+        conditions:
+          type: array
+          items: { $ref: "#/components/schemas/DeploymentCondition" }
+        pods:
+          type: array
+          items: { $ref: "#/components/schemas/PodStatus" }
+    DeploymentCondition:
+      type: object
+      properties:
+        type: { type: string, example: Available }
+        status: { type: string, example: "False" }
+        reason: { type: string, example: MinimumReplicasUnavailable }
+        message: { type: string }
+    PodStatus:
+      type: object
+      properties:
+        name: { type: string, example: ssg-dev-7d9f4b6c8-xk2wq }
+        phase: { type: string, example: Pending }
+        ready: { type: boolean }
+        restarts: { type: integer, format: int32 }
+        reason:
+          type: string
+          description: container's stuck state, when it has one
+          example: ImagePullBackOff
+        message: { type: string }
+    Rollouts:
+      type: object
+      required: [rollouts]
+      properties:
+        rollouts:
+          type: array
+          items: { $ref: "#/components/schemas/Rollout" }
+    Rollout:
+      type: object
+      properties:
+        time: { type: string, format: date-time }
+        raven: { type: string, example: ssg-dev }
+        namespace: { type: string, example: ssg }
+        engine: { type: string, example: dev }
+        actor:
+          type: string
+          description: authenticated subject that requested the raven
+          example: "system:serviceaccount:ci:provisioner"
+        branch:
+          type: string
+          description: git branch holding the ArgoCD Application awaiting approval
+          example: raven/create-ssg-dev
+        succeeded: { type: boolean }
+        error:
+          type: string
+          description: failure reason, with secrets redacted
+        stages:
+          type: array
+          items: { $ref: "#/components/schemas/RolloutStage" }
+    RolloutStage:
+      type: object
+      properties:
+        stage:
+          type: string
+          enum: [preflight, repo, vault, cluster, git]
+        status:
+          type: string
+          enum: [pending, done, skipped, failed, "rolled back"]
+        detail: { type: string }
     Health:
       type: object
       properties:
