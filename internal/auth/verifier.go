@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -12,6 +13,18 @@ import (
 type Claims struct {
 	Subject string
 	Issuer  string
+	// Scopes holds the granted OAuth2 scopes, split from the space-delimited
+	// scope claim.
+	Scopes []string
+}
+
+// HasScope reports whether the token carries scope. Matching is exact, and the
+// empty scope never matches.
+func (c *Claims) HasScope(scope string) bool {
+	if scope == "" {
+		return false
+	}
+	return slices.Contains(c.Scopes, scope)
 }
 
 // TokenVerifier verifies OIDC JWT tokens using JWKS from the issuer.
@@ -34,6 +47,10 @@ func NewTokenVerifier(ctx context.Context, issuerURL string, audience string) (*
 	return &TokenVerifier{verifier: verifier}, nil
 }
 
+type scopeClaim struct {
+	Scope string `json:"scope"`
+}
+
 // Verify validates a raw JWT token string and returns the extracted claims.
 func (tv *TokenVerifier) Verify(ctx context.Context, rawToken string) (*Claims, error) {
 	idToken, err := tv.verifier.Verify(ctx, rawToken)
@@ -41,9 +58,14 @@ func (tv *TokenVerifier) Verify(ctx context.Context, rawToken string) (*Claims, 
 		return nil, fmt.Errorf("token verification failed: %w", err)
 	}
 
+	// A token without a scope claim is valid; it just grants nothing.
+	var sc scopeClaim
+	_ = idToken.Claims(&sc)
+
 	return &Claims{
 		Subject: idToken.Subject,
 		Issuer:  idToken.Issuer,
+		Scopes:  strings.Fields(sc.Scope),
 	}, nil
 }
 
