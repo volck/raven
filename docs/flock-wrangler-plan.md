@@ -252,7 +252,34 @@ H4 is now due: `addRoutes` takes 11 parameters and `NewServer` 10.
    `<name>-<namespace>.<domain>` on a single shared domain, and a wrangler
    instance is per-cluster.
 
-5. **Wrangler creates the sealed-secrets repository (`repo` stage).**
+5. **The `{name}-cleaner` ServiceAccount is created out of band.** Wrangler
+   holds `get` on `serviceaccounts` and nothing more. The identity is useless
+   on its own — what makes it work is a RoleBinding in the *target* namespace,
+   granting raven `get,list,watch,create,update,patch,delete` on secrets there
+   (see `role.yaml` / `rolebinding.yaml` for the `ssg-a01631` example, where an
+   SA in `ssg` is bound into namespace `a01631`). Letting wrangler create both
+   halves would let an HTTP caller mint an identity and bind it to any role in
+   any namespace, which is a cluster-admin escalation and would force
+   wrangler's RBAC up from a Role to a ClusterRole.
+
+   Provisioning therefore requires an operator to apply, before the first
+   `POST`:
+
+   - a `ServiceAccount` named `<name>-cleaner` in `WRANGLER_NAMESPACE`, and
+   - a `Role` + `RoleBinding` in the target namespace naming that SA as a
+     subject.
+
+   Preflight fails closed if the SA is absent: it creates nothing, and every
+   later stage reports `pending`. The check is deliberately shallow — it
+   confirms the SA exists but **not** that it is bound, because the binding
+   lives in a namespace wrangler cannot read. A raven can pass preflight and
+   still be denied in its target namespace.
+
+   The SA is the pod's `spec.serviceAccountName`, so a missing one is not a
+   degraded raven but a dead one: the Deployment is accepted, the ReplicaSet
+   never produces a pod, and it sits at 0/1 indefinitely.
+
+6. **Wrangler creates the sealed-secrets repository (`repo` stage).**
    Enabled by `WRANGLER_BITBUCKET_URL` + `WRANGLER_BITBUCKET_TOKEN`; absent,
    the stage is skipped and repositories stay a manual prerequisite.
 
@@ -293,9 +320,6 @@ H4 is now due: `addRoutes` takes 11 parameters and `NewServer` 10.
 - The shared raven key accumulates write access to every sealed-secrets
   repository, with no per-raven revocation. Per-raven keypairs would fix it at
   the cost of a Secret per raven.
-- Who owns the `{name}-cleaner` ServiceAccount: wrangler creates it in `ssg`,
-  or it ships in git beside the target-namespace RoleBinding it is useless
-  without.
 - OIDC audience and scope names for `auth.dev.norsk-tipping.no`. The verifier
   matches the standard space-delimited `scope` claim exactly and treats the
   audience as the OIDC client ID.
