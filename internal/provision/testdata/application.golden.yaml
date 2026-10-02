@@ -1,0 +1,22 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: sealed-secrets
+  namespace: dev
+  labels:
+    managedBy: flock-wrangler
+spec:
+  destination:
+    namespace: dev
+    server: https://kubernetes.default.svc
+  project: dev
+  source:
+    path: declarative/dev/sealedsecrets
+    repoURL: ssh://git@bitbucket.example.com:7999/sec/sealedsecrets-dev.git
+    targetRevision: HEAD
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - Validate=false

@@ -6,7 +6,9 @@ vars:
   LOGPARSER_PKG: ./cmd/logparser
   RAVEN_PKG: ./cmd/raven
   FLOCK_PKG: ./cmd/flock
+  WRANGLER_PKG: ./cmd/wrangler
   KO_DOCKER_REPO: '{{.KO_DOCKER_REPO | default "ghcr.io/volck/raven"}}'
+  HARBOR_PROJECT: '{{.HARBOR_PROJECT | default "harbor.norsk-tipping.no/raven"}}'
 
 tasks:
   test:
@@ -97,6 +99,22 @@ tasks:
       - mkdir -p bin
       - go build -trimpath -ldflags="-s -w" -o bin/raven-flock {{.FLOCK_PKG}}
       - file bin/raven-flock
+
+  build:wrangler:
+    desc: Build the wrangler container image with ko (local).
+    env:
+      KO_DOCKER_REPO: '{{.KO_DOCKER_REPO}}'
+    cmds:
+      - ko build --local --bare {{.WRANGLER_PKG}}
+
+  push:wrangler:
+    desc: Build & push the wrangler container image with ko to ghcr and harbor.
+    cmds:
+      # ko is reproducible, so both registries end up with the same digest.
+      # --bare means KO_DOCKER_REPO is the whole image name, so Harbor needs
+      # the repository appended to the project.
+      - KO_DOCKER_REPO='{{.KO_DOCKER_REPO}}' ko build --bare {{.WRANGLER_PKG}}
+      - KO_DOCKER_REPO='{{.HARBOR_PROJECT}}/wrangler' ko build --bare {{.WRANGLER_PKG}}
 
   push:flock:
     desc: Build & push the flock container image with ko.

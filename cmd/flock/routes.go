@@ -65,6 +65,8 @@ func addRoutes(
 	status StatusSnapshotter,
 	ws WSHandler,
 	pipeline PipelineSnapshotter,
+	rollouts RolloutSnapshotter,
+	deployments DeploymentFetcher,
 ) {
 	mux.Handle("GET /healthz", handleHealthz(logger))
 	mux.Handle("GET /readyz", handleReadyz(logger, ready))
@@ -82,6 +84,8 @@ func addRoutes(
 	mux.Handle("GET /api/v1/status", requireReady(snap, handleAllStatus(logger, status)))
 	mux.Handle("GET /api/v1/inventory", requireReady(snap, handleInventory(logger, status)))
 	mux.Handle("GET /api/v1/all", requireReady(snap, handleAll(logger, snap, health)))
+	addRolloutRoutes(mux, logger, snap, rollouts)
+	addDeploymentRoutes(mux, logger, snap, deployments)
 	if ws != nil {
 		mux.Handle("GET /ws", ws)
 	}

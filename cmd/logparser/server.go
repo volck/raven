@@ -18,9 +18,6 @@ type ReadyChecker interface {
 	Ready() bool
 }
 
-// staticSnapshot adapts a LogParserConfig to Snapshotter so the HTTP layer
-// can serve the static, file-loaded routing until the live Provider is
-// wired in (Phase H).
 type staticSnapshot auditlog.LogParserConfig
 
 func (s staticSnapshot) Snapshot() auditlog.RoutingConfig {
@@ -30,8 +27,6 @@ func (s staticSnapshot) Snapshot() auditlog.RoutingConfig {
 	}
 }
 
-// alwaysReady satisfies ReadyChecker for paths where readiness has no
-// meaningful pre-load state (e.g. static file config).
 type alwaysReady struct{}
 
 func (alwaysReady) Ready() bool { return true }

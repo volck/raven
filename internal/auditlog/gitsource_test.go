@@ -125,6 +125,32 @@ routing:
 	}
 }
 
+func TestGitSourceLoadMergesRoutingDirectory(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not on PATH")
+	}
+
+	url, dir := initGitRepoDir(t, "main", "routes/ssg-dev.json", `{"secret_engines":["dev"],"routing":{"dev":["https://ssg-dev.example"]}}`)
+	if err := os.WriteFile(filepath.Join(dir, "routes/ssg-bygg.json"), []byte(`{"secret_engines":["dev"],"routing":{"dev":["https://ssg-bygg.example"]}}`), 0600); err != nil {
+		t.Fatalf("write second route: %v", err)
+	}
+	gitRun(t, dir, "add", "routes/ssg-bygg.json")
+	gitRun(t, dir, "commit", "-m", "add second route")
+
+	src := NewGitSource(GitSourceConfig{URL: url, Branch: "main", Path: "routes"})
+	cfg, err := src.Load(context.Background())
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.SecretEngines) != 1 || cfg.SecretEngines[0] != "dev" {
+		t.Fatalf("engines = %v, want [dev]", cfg.SecretEngines)
+	}
+	if got := cfg.Routing["dev"]; len(got) != 2 || got[0] != "https://ssg-bygg.example" || got[1] != "https://ssg-dev.example" {
+		t.Fatalf("targets = %v", got)
+	}
+}
+
 // TestGitSourcePersistsClone is the RED test for cycle F3:
 // GitSource keeps a persistent local clone between Loads so subsequent
 // Loads fetch incrementally instead of re-cloning from scratch.

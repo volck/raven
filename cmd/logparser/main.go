@@ -135,18 +135,10 @@ func run(
 			cfg.OIDC.Scopes,
 		)
 		httpClient := creds.HTTPClient(ctx)
-		if provider != nil {
-			dispatcher = auditlog.NewDispatcherFromSnapshot(provider, httpClient)
-		} else {
-			dispatcher = auditlog.NewDispatcher(cfg.Routing, httpClient)
-		}
+		dispatcher = auditlog.NewDispatcherFromSnapshot(snap, httpClient)
 		logger.Info("OIDC client credentials configured", "token_url", cfg.OIDC.TokenURL)
 	} else {
-		if provider != nil {
-			dispatcher = auditlog.NewDispatcherFromSnapshot(provider, nil)
-		} else {
-			dispatcher = auditlog.NewDispatcher(cfg.Routing, nil)
-		}
+		dispatcher = auditlog.NewDispatcherFromSnapshot(snap, nil)
 		logger.Warn("No OIDC configuration — dispatching without authentication")
 	}
 
@@ -173,10 +165,7 @@ func run(
 	lines := make(chan string, 100)
 	go tailer.Tail(lines)
 
-	startupEngines := cfg.SecretEngines
-	if provider != nil {
-		startupEngines = provider.Snapshot().SecretEngines
-	}
+	startupEngines := snap.Snapshot().SecretEngines
 	logger.Info("Log parser started",
 		"audit_log", cfg.AuditLogPath,
 		"engines", strings.Join(startupEngines, ","),
@@ -234,7 +223,7 @@ func run(
 		for {
 			select {
 			case line := <-lines:
-				processLine(logger, cfg, snap, debouncer, line)
+				processLine(logger, snap, debouncer, line)
 				if cfg.StateFile != "" {
 					saveOffset(cfg.StateFile, tailer.Offset(), logger)
 				}
@@ -257,7 +246,7 @@ func run(
 	return nil
 }
 
-func processLine(logger *slog.Logger, cfg auditlog.LogParserConfig, snap Snapshotter, debouncer *auditlog.Debouncer, line string) {
+func processLine(logger *slog.Logger, snap Snapshotter, debouncer *auditlog.Debouncer, line string) {
 	entry, err := auditlog.ParseEntry([]byte(line))
 	if err != nil {
 		logger.Debug("Skipping unparseable line", "error", err)
@@ -269,10 +258,7 @@ func processLine(logger *slog.Logger, cfg auditlog.LogParserConfig, snap Snapsho
 		return
 	}
 
-	engines := cfg.SecretEngines
-	if cfg.Git != nil {
-		engines = snap.Snapshot().SecretEngines
-	}
+	engines := snap.Snapshot().SecretEngines
 	if !auditlog.MatchesEngine(entry.Request.Path, engines) {
 		return
 	}

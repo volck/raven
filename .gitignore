@@ -19,6 +19,7 @@ deployments/ssg-*.yaml
 deployments/ssg-*.json
 deployments/ansible/*.retry
 deployments/logparser-config-*.json
+!deployments/logparser-config-prod.json
 ssgkubernetesvault.deployment
 
 # Build artifacts and test fixtures

@@ -97,7 +97,7 @@ func newRoutedServerFullPipeline(t *testing.T, snap *fakeSnap, health *fakeHealt
 	if pipeline == nil {
 		pipeline = emptyPipeline{}
 	}
-	addRoutes(mux, logger, ready, snap, health, events, status, nil, pipeline)
+	addRoutes(mux, logger, ready, snap, health, events, status, nil, pipeline, nil, nil)
 	return mux
 }
 

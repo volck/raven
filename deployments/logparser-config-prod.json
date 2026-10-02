@@ -1,0 +1,19 @@
+{
+  "audit_log_path": "/var/log/vault/vault_audit.log",
+  "git": {
+    "url": "ssh://git@bitbucket.norsk-tipping.no:7999/sec/logparser-routing.git",
+    "branch": "master",
+    "path": "routes",
+    "poll_interval": "30s",
+    "ssh_key_path": "/var/lib/raven/logparser-routing-key",
+    "known_hosts_path": "/var/lib/raven/bitbucket-known-hosts"
+  },
+  "oidc": {
+    "token_url": "https://auth.dev.norsk-tipping.no/auth/realms/vault/protocol/openid-connect/token",
+    "client_id": "log-parser",
+    "client_secret": "",
+    "scopes": ["openid"]
+  },
+  "state_file": "/var/lib/raven/logparser-offset",
+  "debounce_window": "2s"
+}

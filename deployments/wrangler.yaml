@@ -1,0 +1,287 @@
+---
+# RBAC: wrangler creates and reads raven workloads in ssg only. Nothing it
+# does is cluster-scoped, so a Role is enough.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: flock-wrangler
+  namespace: ssg
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: flock-wrangler
+  namespace: ssg
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create"]
+  # The {name}-cleaner identity is created out of band, alongside the
+  # RoleBinding in the target namespace that makes it useful.
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
+  - apiGroups: ["route.openshift.io"]
+    resources: ["routes"]
+    verbs: ["create", "delete"]
+  # Setting spec.host, as DefaultRouteHost does, is a separate subresource.
+  - apiGroups: ["route.openshift.io"]
+    resources: ["routes/custom-host"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: flock-wrangler
+  namespace: ssg
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: flock-wrangler
+subjects:
+  - kind: ServiceAccount
+    name: flock-wrangler
+    namespace: ssg
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wrangler-known-hosts
+  namespace: ssg
+data:
+  # Verify before trusting: ssh-keyscan -p 7999 bitbucket.norsk-tipping.no
+  # RSA fingerprint SHA256:YhT/SXqfSxJZc/U8qFSewDR3759D+S4EyUwjK6Km4UI
+  known_hosts: |
+    [bitbucket.norsk-tipping.no]:7999 ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC8J6s0Pm26cc2fIfTMkPVbjYJsnQ6qlhhMIPLW0VJ2vcj4wOVGAM9XWJifdRIhiWuA+UHhBGYf9XRnH4LmooUaHcqcBe2eOPl+imv5Ux4Jgjd8IaZom9QYMg/lTG/wRphv1aG6WFU2v7m5dGedMt6hsE4wA2nUCFiISAYNeZGDm5AU6938AKVgiLHKlk3GGxmGFtUFqBIuHUrxKZo1VAzNXErw6IoBQAgh2XgBrpZoz5hbyGySLwn39HMzAk+3hAeT1UisG/HMdbkWrSyuyNMyERSCaAjAn3c/W9xjw8u3swBLA50bOfQ82VkVa9xaja/6Ih08/tdaza28m79KZs2f
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: flock-wrangler
+  namespace: ssg
+  labels:
+    app: flock-wrangler
+spec:
+  selector:
+    app: flock-wrangler
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+  type: ClusterIP
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: flock-wrangler
+  namespace: ssg
+  labels:
+    app: flock-wrangler
+  annotations:
+    # Provisioning is synchronous and clones the ArgoCD monorepo, which
+    # outlasts the router's 30s default. The client disconnect that timeout
+    # causes cancels the request context mid-provision.
+    haproxy.router.openshift.io/timeout: 300s
+spec:
+  to:
+    kind: Service
+    name: flock-wrangler
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flock-wrangler
+  namespace: ssg
+  labels:
+    app: flock-wrangler
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app: flock-wrangler
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: flock-wrangler
+    spec:
+      serviceAccountName: flock-wrangler
+      containers:
+        - name: flock-wrangler
+          image: harbor.norsk-tipping.no/raven/wrangler@sha256:6ce85bafd062817281be726609824ce9a16d2253df10857d632dbbb7e5c57a4b
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: WRANGLER_ADDR
+              value: "0.0.0.0:8080"
+            - name: WRANGLER_NAMESPACE
+              value: "ssg"
+            - name: WRANGLER_CLUSTER_DOMAIN
+              value: "apps.ocpdq02.norsk-tipping.no"
+
+            # The raven image wrangler stamps into every Deployment it creates.
+            # Pinned to the digest the existing fleet runs (ravenunstable:latest
+            # as of 2026-05-22), so new ravens match their neighbours.
+            - name: WRANGLER_IMAGE
+              value: "image-registry.openshift-image-registry.svc:5000/ssg/ravenunstable@sha256:48956b7ce003b4fe5409122eefc3bd94b129f329bd4abcfb8bd8e1cd3e0a0347"
+
+            - name: WRANGLER_OIDC_ISSUER
+              value: "https://auth.dev.norsk-tipping.no/auth/realms/vault"
+            - name: WRANGLER_OIDC_AUDIENCE
+              value: "flock-wrangler"
+            - name: WRANGLER_REQUIRED_SCOPE
+              value: "raven:provision"
+
+            - name: VAULT_ADDR
+              value: "https://vault.norsk-tipping.no"
+            - name: VAULT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: wrangler-vault-token
+                  key: ssgwrangler.token
+
+            # Repository holding the ArgoCD Applications wrangler pushes to.
+            - name: WRANGLER_ARGO_REPO_URL
+              value: "ssh://git@bitbucket.norsk-tipping.no:7999/git/bender.git"
+            - name: WRANGLER_ARGO_BASE_BRANCH
+              value: "master"
+            - name: WRANGLER_ARGO_BITBUCKET_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: wrangler-argo-bitbucket-token
+                  key: WRANGLER_ARGO_BITBUCKET_TOKEN
+            - name: WRANGLER_ROUTING_REPO_URL
+              value: "ssh://git@bitbucket.norsk-tipping.no:7999/sec/logparser-routing.git"
+            - name: WRANGLER_ROUTING_BASE_BRANCH
+              value: "master"
+            - name: WRANGLER_ARGO_TARGET_REVISION
+              value: "HEAD"
+
+            - name: WRANGLER_BITBUCKET_URL
+              value: "https://bitbucket.norsk-tipping.no"
+            - name: WRANGLER_BITBUCKET_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: wrangler-bitbucket-token
+                  key: WRANGLER_BITBUCKET_TOKEN
+            # The account owning the mounted ssh key. It is granted write
+            # access on every repository wrangler provisions.
+            - name: WRANGLER_BITBUCKET_USER
+              valueFrom:
+                secretKeyRef:
+                  name: wrangler-bitbucket-token
+                  key: WRANGLER_BITBUCKET_USER
+            # ArgoCD's own read-only key, registered as an access key on every
+            # provisioned repository so its Application can sync.
+            - name: WRANGLER_ARGOCD_READER_KEY
+              value: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDnylCPIwNdp4hLwjoqn70nR1TNR5H/03/RpfcHh3MAp argocd_gitreader@norsk-tipping.no"
+
+            # Same key raven mounts.
+            - name: WRANGLER_GIT_SSH_KEY
+              value: "/secret/ssh-privatekey"
+            - name: WRANGLER_GIT_KNOWN_HOSTS
+              value: "/etc/ssh-known-hosts/known_hosts"
+
+            # Adds the NT root CA to the system bundle rather than replacing
+            # it: Bitbucket is signed internally, Keycloak publicly.
+            - name: SSL_CERT_DIR
+              value: "/tmp/cert"
+
+            # Defaults copied into every raven wrangler creates.
+            - name: RAVEN_VAULTENDPOINT
+              value: "https://vault.norsk-tipping.no/"
+            - name: RAVEN_CLONE_PATH
+              value: "/tmp/clone"
+            - name: RAVEN_CERT_FILE
+              value: "/mg/secret/ssc/tls.crt"
+            - name: RAVEN_LOGLEVEL
+              value: "INFO"
+            # True on every existing raven. Without these a new one would
+            # silently skip the rollout restart its RBAC is granted for.
+            - name: RAVEN_KUBERNETESMONITOR
+              value: "true"
+            - name: RAVEN_KUBERNETESREMOVE
+              value: "true"
+            - name: RAVEN_KUBERNETES_ROLLOUT
+              value: "true"
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 15
+            timeoutSeconds: 2
+            failureThreshold: 4
+          resources:
+            requests:
+              cpu: 25m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              # Publishing clones the ArgoCD monorepo, whose packfile index
+              # dwarfs everything else wrangler does.
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: sshkey
+              mountPath: /secret
+              readOnly: true
+            - name: knownhosts
+              mountPath: /etc/ssh-known-hosts
+              readOnly: true
+            - name: ntrootcert
+              mountPath: /tmp/cert
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: sshkey
+          secret:
+            secretName: ssgsshprivatekey
+            defaultMode: 0400
+        - name: knownhosts
+          configMap:
+            name: wrangler-known-hosts
+        - name: ntrootcert
+          secret:
+            secretName: ntrootcert
+        - name: tmp
+          emptyDir: {}
