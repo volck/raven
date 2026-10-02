@@ -216,6 +216,7 @@ func TestHandleCreateRaven_JournalsFailedRollout(t *testing.T) {
 		stageRepo:      statusSkipped,
 		stageVault:     statusRolledBack,
 		stageCluster:   statusFailed,
+		stageRouting:   statusPending,
 		stageGit:       statusPending,
 	}
 	for _, stage := range entry.Stages {

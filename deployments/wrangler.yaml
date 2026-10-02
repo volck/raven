@@ -130,7 +130,7 @@ spec:
       serviceAccountName: flock-wrangler
       containers:
         - name: flock-wrangler
-          image: harbor.norsk-tipping.no/raven/wrangler@sha256:61135a13feb3bb21dc053bd4ae52bc5191c8a280f9f9fa04624a8d22a663f7a6
+          image: harbor.norsk-tipping.no/raven/wrangler@sha256:6ce85bafd062817281be726609824ce9a16d2253df10857d632dbbb7e5c57a4b
           imagePullPolicy: IfNotPresent
           env:
             - name: WRANGLER_ADDR
@@ -165,6 +165,15 @@ spec:
             - name: WRANGLER_ARGO_REPO_URL
               value: "ssh://git@bitbucket.norsk-tipping.no:7999/git/bender.git"
             - name: WRANGLER_ARGO_BASE_BRANCH
+              value: "master"
+            - name: WRANGLER_ARGO_BITBUCKET_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: wrangler-argo-bitbucket-token
+                  key: WRANGLER_ARGO_BITBUCKET_TOKEN
+            - name: WRANGLER_ROUTING_REPO_URL
+              value: "ssh://git@bitbucket.norsk-tipping.no:7999/sec/logparser-routing.git"
+            - name: WRANGLER_ROUTING_BASE_BRANCH
               value: "master"
             - name: WRANGLER_ARGO_TARGET_REVISION
               value: "HEAD"
@@ -205,9 +214,17 @@ spec:
             - name: RAVEN_CLONE_PATH
               value: "/tmp/clone"
             - name: RAVEN_CERT_FILE
-              value: "/tmp/cert/ca.crt"
+              value: "/mg/secret/ssc/tls.crt"
             - name: RAVEN_LOGLEVEL
               value: "INFO"
+            # True on every existing raven. Without these a new one would
+            # silently skip the rollout restart its RBAC is granted for.
+            - name: RAVEN_KUBERNETESMONITOR
+              value: "true"
+            - name: RAVEN_KUBERNETESREMOVE
+              value: "true"
+            - name: RAVEN_KUBERNETES_ROLLOUT
+              value: "true"
           ports:
             - name: http
               containerPort: 8080

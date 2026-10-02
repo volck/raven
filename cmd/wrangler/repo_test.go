@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,7 +17,131 @@ import (
 
 const testRepoURL = "ssh://git@bitbucket.example.com:7999/sec/sealedsecrets-dev.git"
 
+func TestArgoPublisher_CreatesPRAndRetriesExistingBranch(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name      string
+		pushErr   error
+		prStatus  int
+		wantCalls int
+		wantErr   bool
+	}{
+		{name: "push then PR", prStatus: http.StatusCreated, wantCalls: 1},
+		{name: "retry existing branch", pushErr: provision.ErrBranchExists, prStatus: http.StatusCreated, wantCalls: 1},
+		{name: "push failed", pushErr: errors.New("push refused"), wantErr: true},
+		{name: "PR failed", prStatus: http.StatusForbidden, wantCalls: 1, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			pushed := &fakePublisher{err: test.pushErr}
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if pushed.callCount() != 1 {
+					t.Error("PR requested before publishing")
+				}
+				if r.URL.Path != "/rest/api/1.0/projects/git/repos/bender/pull-requests" {
+					t.Errorf("PR targets wrong repository: %s", r.URL.Path)
+				}
+				if r.Method == http.MethodGet {
+					_, _ = io.WriteString(w, `{"values":[],"isLastPage":true}`)
+					return
+				}
+				calls++
+				w.WriteHeader(test.prStatus)
+				_, _ = io.WriteString(w, `{"id":7}`)
+			}))
+			defer server.Close()
+			client, err := bitbucket.New(server.URL, "token")
+			if err != nil {
+				t.Fatal(err)
+			}
+			publisher := &argoPublisher{
+				publisher: pushed, client: client,
+				repo: bitbucket.Repo{ProjectKey: "git", Slug: "bender"}, baseBranch: "master",
+				logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+			}
+			deps, _, _, _ := newTestDeps()
+			deps.publisher = publisher
+			branch, report, err := provisionRaven(context.Background(), deps, wranglerSpec(), false)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("error = %v", err)
+			}
+			if calls != test.wantCalls {
+				t.Errorf("POST count = %d, want %d", calls, test.wantCalls)
+			}
+			if test.wantErr {
+				if report.statusOf(stageGit) != statusFailed {
+					t.Error("git stage should fail")
+				}
+			} else if branch != provision.BranchName(wranglerSpec()) || report.statusOf(stageGit) != statusDone {
+				t.Errorf("branch=%q git status=%s", branch, report.statusOf(stageGit))
+			}
+		})
+	}
+}
+
 const testReaderKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDnylCPIwNdp4hLwjoqn70nR1TNR5H/03/RpfcHh3MAp argocd_gitreader@example.com"
+
+func TestNewArgoPublisher(t *testing.T) {
+	t.Parallel()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cfg := config{
+		argoRepoURL:    "ssh://git@bitbucket.example.com:7999/git/bender.git",
+		argoBaseBranch: "production",
+		bitbucketURL:   "https://bitbucket.example.com", bitbucketToken: "token",
+		routingRepoURL: "ssh://git@bitbucket.example.com:7999/sec/logparser-routing.git",
+	}
+	publisher, err := newArgoPublisher(cfg, nil, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	argo, ok := publisher.(*argoPublisher)
+	if !ok || argo.repo.Slug != "bender" || argo.repo.ProjectKey != "git" || argo.baseBranch != "production" {
+		t.Fatalf("incorrect ArgoCD PR configuration: %+v", publisher)
+	}
+	for _, test := range []struct {
+		name      string
+		argoToken string
+		wantToken string
+	}{
+		{name: "shared token", wantToken: "token"},
+		{name: "dedicated PR token", argoToken: "argo-token", wantToken: "argo-token"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("Authorization") != "Bearer "+test.wantToken {
+					t.Error("PR request used the wrong token")
+				}
+				if r.Method == http.MethodGet {
+					_, _ = io.WriteString(w, `{"values":[],"isLastPage":true}`)
+					return
+				}
+				w.WriteHeader(http.StatusCreated)
+				_, _ = io.WriteString(w, `{"id":7}`)
+			}))
+			defer server.Close()
+			testConfig := cfg
+			testConfig.bitbucketURL = server.URL
+			testConfig.argoBitbucketToken = test.argoToken
+			publisher, err := newArgoPublisher(testConfig, nil, logger)
+			if err != nil {
+				t.Fatal(err)
+			}
+			argo := publisher.(*argoPublisher)
+			argo.publisher = &fakePublisher{}
+			if _, err := argo.Publish(context.Background(), wranglerSpec(), nil); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	cfg.bitbucketURL = ""
+	publisher, err = newArgoPublisher(cfg, nil, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := publisher.(*provision.Publisher); !ok {
+		t.Fatal("branch-only installations should still work")
+	}
+}
 
 const accessKeysPath = "/rest/keys/1.0/projects/sec/repos/sealedsecrets-dev/ssh"
 

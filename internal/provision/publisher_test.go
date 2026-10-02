@@ -64,6 +64,89 @@ func testPublisher(t *testing.T, remote, workDir string) *Publisher {
 	)
 }
 
+func TestPublisher_DirectPushRejectsConcurrentUpdate(t *testing.T) {
+	t.Parallel()
+	remote := newBareRemote(t)
+	pub := testPublisher(t, remote, t.TempDir())
+	pub.Option(WithDirectPush(true))
+	other := testPublisher(t, remote, t.TempDir())
+	other.Option(WithDirectPush(true))
+	spec := validSpec()
+	pub.Option(WithClock(func() time.Time {
+		if _, err := other.Publish(context.Background(), spec, []File{{Name: "routes/other.json", Data: []byte("other\n")}}); err != nil {
+			t.Fatal(err)
+		}
+		return fixedTime
+	}))
+	files := []File{{Name: "routes/demo.json", Data: []byte("demo\n")}}
+	if _, err := pub.Publish(context.Background(), spec, files); err == nil {
+		t.Fatal("concurrent remote update should reject the push")
+	}
+	remoteHead := headCommit(t, remote, "master")
+	if _, err := remoteHead.File("routes/other.json"); err != nil {
+		t.Fatal("concurrent update was lost:", err)
+	}
+	if _, err := remoteHead.File("routes/demo.json"); err == nil {
+		t.Fatal("rejected push changed the remote")
+	}
+	pub.Option(WithClock(func() time.Time { return fixedTime }))
+	if _, err := pub.Publish(context.Background(), spec, files); err != nil {
+		t.Fatal("retry:", err)
+	}
+	retried := headCommit(t, remote, "master")
+	for _, name := range []string{"routes/other.json", "routes/demo.json"} {
+		if _, err := retried.File(name); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestPublisher_DirectPush(t *testing.T) {
+	t.Parallel()
+	remote := newBareRemote(t)
+	work := t.TempDir()
+	pub := testPublisher(t, remote, work)
+	pub.Option(WithDirectPush(true))
+	spec := validSpec()
+	files := []File{{Name: "routes/demo.json", Data: []byte("routing\n")}}
+	branch, err := pub.Publish(context.Background(), spec, files)
+	if err != nil || branch != "master" {
+		t.Fatalf("branch=%q err=%v", branch, err)
+	}
+	first := headCommit(t, remote, "master")
+	if _, err := first.File("routes/demo.json"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.File("README.md"); err != nil {
+		t.Fatal("existing files were lost:", err)
+	}
+	if _, err := pub.Publish(context.Background(), spec, files); err != nil {
+		t.Fatal(err)
+	}
+	if headCommit(t, remote, "master").Hash != first.Hash {
+		t.Fatal("unchanged retry created another commit")
+	}
+	files[0].Data = []byte("updated routing\n")
+	if _, err := pub.Publish(context.Background(), spec, files); err != nil {
+		t.Fatal(err)
+	}
+	updated := headCommit(t, remote, "master")
+	if updated.Hash == first.Hash {
+		t.Fatal("changed routing was not published")
+	}
+	if updated.ParentHashes[0] != first.Hash {
+		t.Fatal("push did not preserve history")
+	}
+	bare, err := git.PlainOpen(remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bare.Reference(plumbing.NewBranchReferenceName(BranchName(spec)), true); !errors.Is(err, plumbing.ErrReferenceNotFound) {
+		t.Fatalf("unexpected review branch: %v", err)
+	}
+	assertEmptyDir(t, work)
+}
+
 // C1: the branch carries the rendered files, committed with the configured
 // author and clock.
 func TestPublisher_Publish_Commit(t *testing.T) {

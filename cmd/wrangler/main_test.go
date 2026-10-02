@@ -82,6 +82,36 @@ func TestLoadConfig_ReadsRequiredScope(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_ReadsArgoBitbucketToken(t *testing.T) {
+	t.Parallel()
+	env := baseEnv()
+	env["WRANGLER_BITBUCKET_TOKEN"] = "sec-token"
+	env["WRANGLER_ARGO_BITBUCKET_TOKEN"] = "argo-token"
+
+	cfg, err := loadConfig(getenvFrom(env))
+	if err != nil {
+		t.Fatalf("loadConfig() error = %v", err)
+	}
+	if cfg.argoBitbucketToken != "argo-token" || cfg.bitbucketToken != "sec-token" {
+		t.Fatal("ArgoCD and SEC tokens must be loaded independently")
+	}
+}
+
+func TestLoadConfig_ReadsRoutingRepository(t *testing.T) {
+	t.Parallel()
+	env := baseEnv()
+	env["WRANGLER_ROUTING_REPO_URL"] = "ssh://git@example.com/routing.git"
+	env["WRANGLER_ROUTING_BASE_BRANCH"] = "main"
+
+	cfg, err := loadConfig(getenvFrom(env))
+	if err != nil {
+		t.Fatalf("loadConfig() error = %v", err)
+	}
+	if cfg.routingRepoURL != env["WRANGLER_ROUTING_REPO_URL"] || cfg.routingBaseBranch != "main" {
+		t.Fatalf("routing config = (%q, %q)", cfg.routingRepoURL, cfg.routingBaseBranch)
+	}
+}
+
 // The namespace default is what keeps wrangler's RBAC a Role rather than a
 // ClusterRole, so it must not silently fall back to all-namespaces.
 func TestLoadConfig_NamespaceDefaultsToSSG(t *testing.T) {

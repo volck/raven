@@ -1,0 +1,53 @@
+# Prerequisite RBAC for one raven, applied before wrangler provisions it.
+#
+# Wrangler holds only `get` on serviceaccounts. Letting it create the account
+# and its binding would let an HTTP caller mint an identity and bind it to any
+# role in any namespace, so this stays a human step and preflight fails closed
+# until it is done.
+#
+# Replace <RAVEN> with the raven name and <TARGET_NAMESPACE> with the namespace
+# it writes secrets into:
+#
+#   sed -e 's/<RAVEN>/ssg-foo/g' -e 's/<TARGET_NAMESPACE>/foo/g' \
+#       deployments/raven-rbac-template.yaml | oc apply -f -
+#
+# One account per raven, unlike the shared ssg-dev-cleaner the existing fleet
+# uses: that one is bound into twelve namespaces, so any raven running as it
+# reaches every other raven's target.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: <RAVEN>-cleaner
+  namespace: ssg
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: <RAVEN>-cleaner
+  namespace: <TARGET_NAMESPACE>
+rules:
+  # delete is for KubernetesRemove dropping secrets whose vault entry is gone.
+  # create is absent on purpose: the sealed-secrets controller writes them.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "update", "patch", "delete"]
+  # TriggerRollout stamps restartedAt on workloads referencing a changed
+  # secret. It restarts them, never removes them, so delete is absent.
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: <RAVEN>-cleaner
+  namespace: <TARGET_NAMESPACE>
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: <RAVEN>-cleaner
+subjects:
+  - kind: ServiceAccount
+    name: <RAVEN>-cleaner
+    namespace: ssg

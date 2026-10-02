@@ -15,6 +15,60 @@ import (
 
 const testToken = "super-secret-bitbucket-token"
 
+func TestClient_EnsurePullRequest(t *testing.T) {
+	t.Parallel()
+	for _, existing := range []bool{false, true} {
+		t.Run(map[bool]string{false: "create", true: "reuse"}[existing], func(t *testing.T) {
+			posts := 0
+			client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/rest/api/1.0/projects/GIT/repos/bender/pull-requests" {
+					t.Errorf("unexpected path: %s", r.URL.Path)
+				}
+				if r.Header.Get("Authorization") != "Bearer "+testToken {
+					t.Error("missing bearer authentication")
+				}
+				if r.Method == http.MethodGet {
+					if r.URL.Query().Get("state") != "OPEN" || r.URL.Query().Get("at") != "refs/heads/raven/create-demo" || r.URL.Query().Get("direction") != "OUTGOING" {
+						t.Errorf("unexpected query: %s", r.URL.RawQuery)
+					}
+					if existing {
+						_, _ = io.WriteString(w, `{"values":[{"id":42,"fromRef":{"id":"refs/heads/raven/create-demo","repository":{"slug":"bender","project":{"key":"GIT"}}},"toRef":{"id":"refs/heads/master"}}],"isLastPage":true}`)
+					} else {
+						_, _ = io.WriteString(w, `{"values":[],"isLastPage":true}`)
+					}
+					return
+				}
+				posts++
+				var body struct {
+					Title   string `json:"title"`
+					FromRef struct {
+						ID         string               `json:"id"`
+						Repository bitbucket.Repository `json:"repository"`
+					} `json:"fromRef"`
+					ToRef struct {
+						ID string `json:"id"`
+					} `json:"toRef"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Fatal(err)
+				}
+				if r.Method != http.MethodPost || body.Title != "Add ArgoCD Application for raven demo" || body.FromRef.ID != "refs/heads/raven/create-demo" || body.ToRef.ID != "refs/heads/master" || body.FromRef.Repository.Slug != "bender" || body.FromRef.Repository.Project.Key != "GIT" {
+					t.Errorf("unexpected PR request: %+v", body)
+				}
+				w.WriteHeader(http.StatusCreated)
+				_, _ = io.WriteString(w, `{"id":42}`)
+			})
+			link, err := client.EnsurePullRequest(context.Background(), bitbucket.Repo{ProjectKey: "GIT", Slug: "bender"}, "raven/create-demo", "master", "Add ArgoCD Application for raven demo")
+			if err != nil || !strings.HasSuffix(link, "/projects/GIT/repos/bender/pull-requests/42") {
+				t.Fatalf("link=%q err=%v", link, err)
+			}
+			if (existing && posts != 0) || (!existing && posts != 1) {
+				t.Fatalf("unexpected POST count: %d", posts)
+			}
+		})
+	}
+}
+
 func testClient(t *testing.T, handler http.HandlerFunc) *bitbucket.Client {
 	t.Helper()
 
@@ -26,6 +80,73 @@ func testClient(t *testing.T, handler http.HandlerFunc) *bitbucket.Client {
 		t.Fatalf("New() error = %v", err)
 	}
 	return client
+}
+
+func TestClient_EnsurePullRequest_Pagination(t *testing.T) {
+	t.Parallel()
+	gets := 0
+	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Error("should reuse the PR on the second page")
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		gets++
+		if r.URL.Query().Get("start") == "0" {
+			_, _ = io.WriteString(w, `{"values":[{"id":1,"fromRef":{"id":"refs/heads/feature","repository":{"slug":"fork","project":{"key":"OTHER"}}},"toRef":{"id":"refs/heads/master"}},{"id":2,"fromRef":{"id":"refs/heads/feature","repository":{"slug":"bender","project":{"key":"GIT"}}},"toRef":{"id":"refs/heads/other"}}],"isLastPage":false,"nextPageStart":2}`)
+			return
+		}
+		if r.URL.Query().Get("start") != "2" {
+			t.Errorf("unexpected offset: %s", r.URL.RawQuery)
+		}
+		_, _ = io.WriteString(w, `{"values":[{"id":3,"fromRef":{"id":"refs/heads/feature","repository":{"slug":"bender","project":{"key":"GIT"}}},"toRef":{"id":"refs/heads/master"}}],"isLastPage":true}`)
+	})
+	link, err := client.EnsurePullRequest(context.Background(), bitbucket.Repo{ProjectKey: "GIT", Slug: "bender"}, "feature", "master", "title")
+	if err != nil || !strings.HasSuffix(link, "/3") || gets != 2 {
+		t.Fatalf("link=%q gets=%d err=%v", link, gets, err)
+	}
+}
+
+func TestClient_EnsurePullRequest_Conflict(t *testing.T) {
+	t.Parallel()
+	for _, found := range []bool{true, false} {
+		t.Run(map[bool]string{true: "concurrent creation", false: "unrelated conflict"}[found], func(t *testing.T) {
+			posted := false
+			client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPost {
+					posted = true
+					w.WriteHeader(http.StatusConflict)
+					return
+				}
+				if posted && found {
+					_, _ = io.WriteString(w, `{"values":[{"id":9,"fromRef":{"id":"refs/heads/feature","repository":{"slug":"bender","project":{"key":"GIT"}}},"toRef":{"id":"refs/heads/master"}}],"isLastPage":true}`)
+					return
+				}
+				_, _ = io.WriteString(w, `{"values":[],"isLastPage":true}`)
+			})
+			link, err := client.EnsurePullRequest(context.Background(), bitbucket.Repo{ProjectKey: "GIT", Slug: "bender"}, "feature", "master", "title")
+			if found {
+				if err != nil || !strings.HasSuffix(link, "/9") {
+					t.Fatalf("link=%q err=%v", link, err)
+				}
+			} else if !errors.Is(err, bitbucket.ErrAlreadyExists) {
+				t.Fatalf("unrelated conflict must fail: %v", err)
+			}
+		})
+	}
+}
+
+func TestClient_EnsurePullRequest_LookupFailure(t *testing.T) {
+	t.Parallel()
+	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Error("must not create after a failed lookup")
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	if _, err := client.EnsurePullRequest(context.Background(), bitbucket.Repo{ProjectKey: "GIT", Slug: "bender"}, "feature", "master", "title"); err == nil {
+		t.Fatal("expected unauthorized lookup to fail")
+	}
 }
 
 // repositoryJSON mirrors a real response from the instance, including the

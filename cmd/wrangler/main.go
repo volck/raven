@@ -53,6 +53,14 @@ func run(ctx context.Context, getenv func(string) string, stdout, stderr io.Writ
 	if err != nil {
 		return fmt.Errorf("git auth: %w", err)
 	}
+	var routingPublisher ravenPublisher
+	if cfg.routingRepoURL != "" {
+		routingAuth, err := provision.NewGitAuth(cfg.routingRepoURL, cfg.gitSSHKey, cfg.gitKnownHosts, cfg.gitInsecure)
+		if err != nil {
+			return fmt.Errorf("routing git auth: %w", err)
+		}
+		routingPublisher = provision.NewPublisher(cfg.routingRepoURL, cfg.routingBaseBranch, routingAuth, provision.WithDirectPush(true))
+	}
 
 	verifier, err := auth.NewTokenVerifier(ctx, cfg.oidcIssuer, cfg.oidcAudience)
 	if err != nil {
@@ -72,18 +80,24 @@ func run(ctx context.Context, getenv func(string) string, stdout, stderr io.Writ
 	if err != nil {
 		return err
 	}
+	argoPublisher, err := newArgoPublisher(cfg, gitAuth, logger)
+	if err != nil {
+		return err
+	}
 
 	srv := newHTTPServer(cfg.addr, NewServer(serverDeps{
 		create: createDeps{
-			vault:     newVaultProvisioner(vaultClient),
-			applier:   applier,
-			publisher: provision.NewPublisher(cfg.argoRepoURL, cfg.argoBaseBranch, gitAuth),
-			repos:     repos,
-			appConfig: cfg.appConfig,
-			image:     cfg.image,
-			namespace: cfg.namespace,
-			journal:   rollouts,
-			logger:    logger,
+			vault:            newVaultProvisioner(vaultClient),
+			applier:          applier,
+			publisher:        argoPublisher,
+			routingPublisher: routingPublisher,
+			repos:            repos,
+			appConfig:        cfg.appConfig,
+			image:            cfg.image,
+			clusterDomain:    cfg.clusterDomain,
+			namespace:        cfg.namespace,
+			journal:          rollouts,
+			logger:           logger,
 		},
 		verifier:      verifier,
 		requiredScope: cfg.requiredScope,

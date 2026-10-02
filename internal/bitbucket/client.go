@@ -171,6 +171,91 @@ func (c *Client) AddAccessKey(ctx context.Context, repo Repo, publicKey, permiss
 	return nil
 }
 
+type pullRequestRef struct {
+	ID         string                `json:"id"`
+	Repository pullRequestRepository `json:"repository"`
+}
+
+type pullRequestRepository struct {
+	Slug    string `json:"slug"`
+	Project struct {
+		Key string `json:"key"`
+	} `json:"project"`
+}
+
+type pullRequest struct {
+	ID      int            `json:"id"`
+	FromRef pullRequestRef `json:"fromRef"`
+	ToRef   pullRequestRef `json:"toRef"`
+}
+
+func (c *Client) EnsurePullRequest(ctx context.Context, repo Repo, branch, baseBranch, title string) (string, error) {
+	repository := pullRequestRepository{Slug: repo.Slug}
+	repository.Project.Key = repo.ProjectKey
+	from := pullRequestRef{ID: "refs/heads/" + branch, Repository: repository}
+	to := pullRequestRef{ID: "refs/heads/" + baseBranch, Repository: repository}
+	path := fmt.Sprintf("/rest/api/1.0/projects/%s/repos/%s/pull-requests", repo.ProjectKey, repo.Slug)
+	link := func(id int) string {
+		return c.base.JoinPath("projects", repo.ProjectKey, "repos", repo.Slug, "pull-requests", fmt.Sprint(id)).String()
+	}
+	existing, err := c.findPullRequest(ctx, path, from, to)
+	if err != nil {
+		return "", err
+	}
+	if existing != nil {
+		return link(existing.ID), nil
+	}
+	body := struct {
+		Title   string         `json:"title"`
+		FromRef pullRequestRef `json:"fromRef"`
+		ToRef   pullRequestRef `json:"toRef"`
+	}{Title: title, FromRef: from, ToRef: to}
+	var created pullRequest
+	if err := c.do(ctx, http.MethodPost, path, body, &created); err != nil {
+		if errors.Is(err, ErrAlreadyExists) {
+			existing, lookupErr := c.findPullRequest(ctx, path, from, to)
+			if lookupErr != nil {
+				return "", lookupErr
+			}
+			if existing != nil {
+				return link(existing.ID), nil
+			}
+		}
+		return "", fmt.Errorf("create pull request: %w", err)
+	}
+	if created.ID <= 0 {
+		return "", fmt.Errorf("create pull request: response has no ID")
+	}
+	return link(created.ID), nil
+}
+
+func (c *Client) findPullRequest(ctx context.Context, path string, from, to pullRequestRef) (*pullRequest, error) {
+	start := 0
+	for {
+		query := url.Values{"state": {"OPEN"}, "direction": {"OUTGOING"}, "at": {from.ID}, "start": {fmt.Sprint(start)}}
+		var page struct {
+			Values        []pullRequest `json:"values"`
+			IsLastPage    bool          `json:"isLastPage"`
+			NextPageStart int           `json:"nextPageStart"`
+		}
+		if err := c.do(ctx, http.MethodGet, path+"?"+query.Encode(), nil, &page); err != nil {
+			return nil, fmt.Errorf("find pull request: %w", err)
+		}
+		for _, candidate := range page.Values {
+			if candidate.ID > 0 && candidate.FromRef.ID == from.ID && candidate.ToRef.ID == to.ID && candidate.FromRef.Repository.Slug == from.Repository.Slug && strings.EqualFold(candidate.FromRef.Repository.Project.Key, from.Repository.Project.Key) {
+				return &candidate, nil
+			}
+		}
+		if page.IsLastPage {
+			return nil, nil
+		}
+		if page.NextPageStart <= start {
+			return nil, fmt.Errorf("find pull request: invalid pagination")
+		}
+		start = page.NextPageStart
+	}
+}
+
 func (c *Client) do(ctx context.Context, method, path string, body any, out any) error {
 	var payload io.Reader
 	if body != nil {

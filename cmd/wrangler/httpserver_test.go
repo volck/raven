@@ -30,4 +30,12 @@ func TestNewHTTPServer_BoundsEveryStage(t *testing.T) {
 	if srv.WriteTimeout <= srv.ReadTimeout {
 		t.Error("WriteTimeout must leave room for provisioning to finish")
 	}
+
+	// A live provision took 197s against a 120s WriteTimeout: the connection
+	// closed on completed work and the router reported 502. Staying above the
+	// route's own timeout keeps the router the first limit to bite, so a slow
+	// provision fails as a 504 rather than a severed backend.
+	if srv.WriteTimeout <= routeTimeout {
+		t.Errorf("WriteTimeout %s must exceed the route timeout %s", srv.WriteTimeout, routeTimeout)
+	}
 }

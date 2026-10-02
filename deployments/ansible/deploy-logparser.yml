@@ -14,6 +14,8 @@
     vault_addr: https://vault.norsk-tipping.no
     vault_secret_path: intern/data/team-cp/raven/log-parser
     oidc_client_secret: ""
+    routing_ssh_key: "{{ state_dir }}/logparser-routing-key"
+    routing_known_hosts: "{{ state_dir }}/bitbucket-known-hosts"
 
   tasks:
     - name: Check Vault prerequisites
@@ -68,6 +70,20 @@
         group: root
         mode: "0755"
       notify: Restart raven-logparser
+
+    - name: Create logparser routing SSH key
+      ansible.builtin.command:
+        cmd: "ssh-keygen -q -t ed25519 -N '' -f {{ routing_ssh_key }}"
+        creates: "{{ routing_ssh_key }}"
+      become_user: "{{ service_user }}"
+
+    - name: Install Bitbucket host key
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../bitbucket-known-hosts"
+        dest: "{{ routing_known_hosts }}"
+        owner: "{{ service_user }}"
+        group: "{{ service_group }}"
+        mode: "0644"
 
     - name: Copy logparser config
       ansible.builtin.copy:

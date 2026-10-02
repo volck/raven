@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"path"
 
+	"github.com/volck/raven/internal/auditlog"
 	"github.com/volck/raven/internal/provision"
 )
 
@@ -39,10 +41,13 @@ type createDeps struct {
 	vault     vaultProvisioning
 	applier   ravenApplier
 	publisher ravenPublisher
+	// routingPublisher is nil when git-backed logparser routing is unconfigured.
+	routingPublisher ravenPublisher
 	// repos is nil when Bitbucket is not configured, which skips the stage.
-	repos     repoProvisioner
-	appConfig provision.ApplicationConfig
-	image     string
+	repos         repoProvisioner
+	appConfig     provision.ApplicationConfig
+	image         string
+	clusterDomain string
 	// namespace is the only namespace wrangler holds RBAC in, so callers do
 	// not get to choose one.
 	namespace string
@@ -199,6 +204,7 @@ const (
 	stageRepo      = "repo"
 	stageVault     = "vault"
 	stageCluster   = "cluster"
+	stageRouting   = "routing"
 	stageGit       = "git"
 )
 
@@ -213,7 +219,7 @@ func (e *stageError) Unwrap() error { return e.err }
 // provisionRaven runs the stages in the only safe order: prerequisites before
 // a token is minted, the cluster before the branch a human will approve.
 func provisionRaven(ctx context.Context, deps createDeps, spec provision.RavenSpec, force bool) (string, *progress, error) {
-	report := newProgress(stagePreflight, stageRepo, stageVault, stageCluster, stageGit)
+	report := newProgress(stagePreflight, stageRepo, stageVault, stageCluster, stageRouting, stageGit)
 
 	fail := func(stage string, err error) (string, *progress, error) {
 		report.set(stage, statusFailed, err.Error())
@@ -263,6 +269,19 @@ func provisionRaven(ctx context.Context, deps createDeps, spec provision.RavenSp
 	}
 	report.set(stageCluster, statusDone, "")
 
+	if deps.routingPublisher == nil {
+		report.set(stageRouting, statusSkipped, "routing repository not configured")
+	} else {
+		files, err := renderRouting(spec, deps.clusterDomain)
+		if err != nil {
+			return fail(stageRouting, err)
+		}
+		if _, err := deps.routingPublisher.Publish(ctx, spec, files); err != nil {
+			return fail(stageRouting, err)
+		}
+		report.set(stageRouting, statusDone, "")
+	}
+
 	if err := ctx.Err(); err != nil {
 		return fail(stageGit, err)
 	}
@@ -278,6 +297,22 @@ func provisionRaven(ctx context.Context, deps createDeps, spec provision.RavenSp
 	report.set(stageGit, statusDone, "")
 
 	return branch, report, nil
+}
+
+func renderRouting(spec provision.RavenSpec, clusterDomain string) ([]provision.File, error) {
+	host := spec.RouteHost
+	if host == "" {
+		host = spec.DefaultRouteHost(clusterDomain)
+	}
+	cfg := auditlog.RoutingConfig{
+		SecretEngines: []string{spec.SecretEngine},
+		Routing:       map[string][]string{spec.SecretEngine: {"https://" + host}},
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("encode routing: %w", err)
+	}
+	return []provision.File{{Name: path.Join("routes", spec.Name+".json"), Data: append(data, '\n')}}, nil
 }
 
 // rollBackToken revokes a credential that never reached the cluster. If the

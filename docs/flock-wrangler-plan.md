@@ -252,22 +252,31 @@ H4 is now due: `addRoutes` takes 11 parameters and `NewServer` 10.
    `<name>-<namespace>.<domain>` on a single shared domain, and a wrangler
    instance is per-cluster.
 
-5. **The `{name}-cleaner` ServiceAccount is created out of band.** Wrangler
-   holds `get` on `serviceaccounts` and nothing more. The identity is useless
-   on its own — what makes it work is a RoleBinding in the *target* namespace,
-   granting raven `get,list,watch,create,update,patch,delete` on secrets there
-   (see `role.yaml` / `rolebinding.yaml` for the `ssg-a01631` example, where an
-   SA in `ssg` is bound into namespace `a01631`). Letting wrangler create both
-   halves would let an HTTP caller mint an identity and bind it to any role in
-   any namespace, which is a cluster-admin escalation and would force
-   wrangler's RBAC up from a Role to a ClusterRole.
+5. **The `{name}-cleaner` ServiceAccount is created out of band, one per
+   raven.** Wrangler holds `get` on `serviceaccounts` and nothing more.
+   Letting it create both the account and the RoleBinding would let an HTTP
+   caller mint an identity and bind it to any role in any namespace, which is
+   a cluster-admin escalation and would force wrangler's RBAC up from a Role
+   to a ClusterRole.
 
-   Provisioning therefore requires an operator to apply, before the first
-   `POST`:
+   Provisioning therefore requires an operator to apply
+   `deployments/raven-rbac-template.yaml` before the first `POST`: a
+   `ServiceAccount` in `WRANGLER_NAMESPACE`, plus a `Role` and `RoleBinding`
+   in the target namespace.
 
-   - a `ServiceAccount` named `<name>-cleaner` in `WRANGLER_NAMESPACE`, and
-   - a `Role` + `RoleBinding` in the target namespace naming that SA as a
-     subject.
+   The role grants secrets `get,list,watch,update,patch,delete` and
+   `apps/{deployments,statefulsets}` the same minus `delete`. The workload
+   half is not incidental: with `KUBERNETES_ROLLOUT` set, `TriggerRollout`
+   stamps `restartedAt` on anything referencing a changed secret, so raven
+   restarts workloads as part of its job. Those verbs are also what
+   `CheckKubernetesServiceAccountPermissions` probes at startup, so trimming
+   them produces a denial log line per probe rather than silence.
+
+   *Per raven, not shared.* The existing fleet runs all thirteen ravens as a
+   single `ssg-dev-cleaner` bound into twelve namespaces, so `ssg-qa01` can
+   restart workloads in `dev`. Deriving the name from the spec confines each
+   raven to its own target. That is a deliberate break with the deployed
+   convention, and it is the reason the manual step exists at all.
 
    Preflight fails closed if the SA is absent: it creates nothing, and every
    later stage reports `pending`. The check is deliberately shallow — it
@@ -314,6 +323,30 @@ H4 is now due: `addRoutes` takes 11 parameters and `NewServer` 10.
    - *Ordered before `vault`.* A repository failure then cannot leave a minted
      token behind.
 
+7. **Routing is published directly; ArgoCD changes require a PR.** After
+  cluster provisioning, the optional `routing` stage commits
+  `routes/<raven-name>.json` to `WRANGLER_ROUTING_REPO_URL` on
+  `WRANGLER_ROUTING_BASE_BRANCH` (default `master`). Identical retries are
+  no-ops; concurrent changes reject the non-forced push. Logparser polls the
+  routing directory and merges its JSON/YAML files into the live snapshot.
+
+  The `git` stage pushes the ArgoCD Application branch and creates or reuses
+  an open Bitbucket PR, without merging it. `WRANGLER_ARGO_BITBUCKET_TOKEN`
+  optionally supplies a separate PR credential; otherwise the existing
+  `WRANGLER_BITBUCKET_TOKEN` is used. A failed PR request fails the stage but
+  does not remove an already-running raven. Do not force-recreate a raven
+  merely to recover a missing PR.
+
+  ArgoCD's existing AppProject must separately allow the source repository
+  in `spec.sourceRepos`, and ArgoCD must have matching repository credentials.
+  The generated PR contains only the Application, not an AppProject change.
+
+8. **The sealing certificate is not the TLS root CA.** The deployed default
+  is `RAVEN_CERT_FILE=/mg/secret/ssc/tls.crt`, from the cluster's `ssc` Secret.
+  `/tmp/cert/ca.crt` is the company TLS trust certificate and must not be used
+  for sealing. Correcting the path requires regenerating any ciphertext
+  previously sealed with the wrong certificate.
+
 ## Open questions
 
 - Base branch name in the ArgoCD repo (assumed `master`, configurable).
@@ -324,7 +357,7 @@ H4 is now due: `addRoutes` takes 11 parameters and `NewServer` 10.
   matches the standard space-delimited `scope` claim exactly and treats the
   audience as the OIDC client ID.
 - Reporting rollout status back onto the approval PR (Bitbucket build-status
-  API). Wrangler pushes a branch today and does not open the PR.
+  API). Wrangler opens the PR but does not publish rollout status to it.
 
 ## Settled for the first deployment
 

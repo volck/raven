@@ -14,17 +14,20 @@ type config struct {
 	requiredScope string
 	// namespace is the only namespace wrangler provisions into and reads
 	// status from, which keeps its RBAC to a single Role.
-	namespace      string
-	image          string
-	clusterDomain  string
-	oidcIssuer     string
-	oidcAudience   string
-	vaultAddr      string
-	vaultToken     string
-	argoRepoURL    string
-	argoBaseBranch string
-	appConfig      provision.ApplicationConfig
-	aws            awsSettings
+	namespace          string
+	image              string
+	clusterDomain      string
+	oidcIssuer         string
+	oidcAudience       string
+	vaultAddr          string
+	vaultToken         string
+	argoRepoURL        string
+	argoBaseBranch     string
+	argoBitbucketToken string
+	routingRepoURL     string
+	routingBaseBranch  string
+	appConfig          provision.ApplicationConfig
+	aws                awsSettings
 	// bitbucketURL empty disables repository provisioning.
 	bitbucketURL   string
 	bitbucketToken string
@@ -43,17 +46,20 @@ type config struct {
 func loadConfig(getenv func(string) string) (config, error) {
 	cfg := config{
 		// Plaintext: TLS is terminated at the edge Route.
-		addr:           valueOr(getenv("WRANGLER_ADDR"), ":8080"),
-		requiredScope:  getenv("WRANGLER_REQUIRED_SCOPE"),
-		namespace:      valueOr(getenv("WRANGLER_NAMESPACE"), "ssg"),
-		image:          getenv("WRANGLER_IMAGE"),
-		clusterDomain:  getenv("WRANGLER_CLUSTER_DOMAIN"),
-		oidcIssuer:     getenv("WRANGLER_OIDC_ISSUER"),
-		oidcAudience:   getenv("WRANGLER_OIDC_AUDIENCE"),
-		vaultAddr:      getenv("VAULT_ADDR"),
-		vaultToken:     getenv("VAULT_TOKEN"),
-		argoRepoURL:    getenv("WRANGLER_ARGO_REPO_URL"),
-		argoBaseBranch: valueOr(getenv("WRANGLER_ARGO_BASE_BRANCH"), "master"),
+		addr:               valueOr(getenv("WRANGLER_ADDR"), ":8080"),
+		requiredScope:      getenv("WRANGLER_REQUIRED_SCOPE"),
+		namespace:          valueOr(getenv("WRANGLER_NAMESPACE"), "ssg"),
+		image:              getenv("WRANGLER_IMAGE"),
+		clusterDomain:      getenv("WRANGLER_CLUSTER_DOMAIN"),
+		oidcIssuer:         getenv("WRANGLER_OIDC_ISSUER"),
+		oidcAudience:       getenv("WRANGLER_OIDC_AUDIENCE"),
+		vaultAddr:          getenv("VAULT_ADDR"),
+		vaultToken:         getenv("VAULT_TOKEN"),
+		argoRepoURL:        getenv("WRANGLER_ARGO_REPO_URL"),
+		argoBaseBranch:     valueOr(getenv("WRANGLER_ARGO_BASE_BRANCH"), "master"),
+		argoBitbucketToken: getenv("WRANGLER_ARGO_BITBUCKET_TOKEN"),
+		routingRepoURL:     getenv("WRANGLER_ROUTING_REPO_URL"),
+		routingBaseBranch:  valueOr(getenv("WRANGLER_ROUTING_BASE_BRANCH"), "master"),
 		appConfig: provision.ApplicationConfig{
 			TargetRevision: valueOr(getenv("WRANGLER_ARGO_TARGET_REVISION"), "HEAD"),
 			DestServer:     valueOr(getenv("WRANGLER_ARGO_DEST_SERVER"), "https://kubernetes.default.svc"),
@@ -95,6 +101,9 @@ func loadConfig(getenv func(string) string) (config, error) {
 
 	if isSSHRemote(cfg.argoRepoURL) && cfg.gitKnownHosts == "" && !cfg.gitInsecure {
 		return config{}, fmt.Errorf("WRANGLER_GIT_KNOWN_HOSTS is required for %s (set WRANGLER_GIT_INSECURE_SKIP_HOST_KEY=true to override)", cfg.argoRepoURL)
+	}
+	if isSSHRemote(cfg.routingRepoURL) && cfg.gitKnownHosts == "" && !cfg.gitInsecure {
+		return config{}, fmt.Errorf("WRANGLER_GIT_KNOWN_HOSTS is required for %s (set WRANGLER_GIT_INSECURE_SKIP_HOST_KEY=true to override)", cfg.routingRepoURL)
 	}
 
 	if cfg.bitbucketURL != "" && cfg.bitbucketToken == "" {

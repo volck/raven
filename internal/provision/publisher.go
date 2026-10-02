@@ -24,6 +24,7 @@ type Publisher struct {
 	repoURL    string
 	baseBranch string
 	auth       transport.AuthMethod
+	directPush bool
 
 	workDir     string
 	now         func() time.Time
@@ -34,6 +35,14 @@ type Publisher struct {
 // Option configures a Publisher and returns an Option that restores the
 // previous value, so callers can defer the undo.
 type Option func(*Publisher) Option
+
+func WithDirectPush(enabled bool) Option {
+	return func(p *Publisher) Option {
+		previous := p.directPush
+		p.directPush = enabled
+		return WithDirectPush(previous)
+	}
+}
 
 // WithClock sets the source of commit timestamps.
 func WithClock(now func() time.Time) Option {
@@ -97,6 +106,9 @@ func BranchName(spec RavenSpec) string {
 // it. The working clone is always removed. It returns the branch name.
 func (p *Publisher) Publish(ctx context.Context, spec RavenSpec, files []File) (string, error) {
 	branch := BranchName(spec)
+	if p.directPush {
+		branch = p.baseBranch
+	}
 
 	dir, err := os.MkdirTemp(p.workDir, "raven-publish-")
 	if err != nil {
@@ -114,20 +126,21 @@ func (p *Publisher) Publish(ctx context.Context, spec RavenSpec, files []File) (
 		return "", fmt.Errorf("clone %s: %w", p.repoURL, err)
 	}
 
-	// Ask the remote rather than the clone: a single-branch clone never
-	// fetches the target branch, so a local ref lookup would always miss.
-	origin, err := repo.Remote("origin")
-	if err != nil {
-		return "", fmt.Errorf("remote origin: %w", err)
-	}
-	refs, err := origin.ListContext(ctx, &git.ListOptions{Auth: p.auth})
-	if err != nil {
-		return "", fmt.Errorf("list remote refs: %w", err)
-	}
-	branchRef := plumbing.NewBranchReferenceName(branch)
-	for _, ref := range refs {
-		if ref.Name() == branchRef {
-			return "", fmt.Errorf("%s: %w", branch, ErrBranchExists)
+	if !p.directPush {
+		// A single-branch clone lacks review branches, so check the remote.
+		origin, err := repo.Remote("origin")
+		if err != nil {
+			return "", fmt.Errorf("remote origin: %w", err)
+		}
+		refs, err := origin.ListContext(ctx, &git.ListOptions{Auth: p.auth})
+		if err != nil {
+			return "", fmt.Errorf("list remote refs: %w", err)
+		}
+		branchRef := plumbing.NewBranchReferenceName(branch)
+		for _, ref := range refs {
+			if ref.Name() == branchRef {
+				return "", fmt.Errorf("%s: %w", branch, ErrBranchExists)
+			}
 		}
 	}
 
@@ -135,11 +148,13 @@ func (p *Publisher) Publish(ctx context.Context, spec RavenSpec, files []File) (
 	if err != nil {
 		return "", fmt.Errorf("worktree: %w", err)
 	}
-	if err := wt.Checkout(&git.CheckoutOptions{
-		Branch: plumbing.NewBranchReferenceName(branch),
-		Create: true,
-	}); err != nil {
-		return "", fmt.Errorf("checkout %s: %w", branch, err)
+	if !p.directPush {
+		if err := wt.Checkout(&git.CheckoutOptions{
+			Branch: plumbing.NewBranchReferenceName(branch),
+			Create: true,
+		}); err != nil {
+			return "", fmt.Errorf("checkout %s: %w", branch, err)
+		}
 	}
 
 	for _, f := range files {
@@ -156,6 +171,16 @@ func (p *Publisher) Publish(ctx context.Context, spec RavenSpec, files []File) (
 	}
 
 	msg := fmt.Sprintf("Add ArgoCD Application for raven %s", spec.Name)
+	if p.directPush {
+		status, err := wt.Status()
+		if err != nil {
+			return "", fmt.Errorf("worktree status: %w", err)
+		}
+		if status.IsClean() {
+			return branch, nil
+		}
+		msg = fmt.Sprintf("Update logparser routing for raven %s", spec.Name)
+	}
 	if _, err := wt.Commit(msg, &git.CommitOptions{
 		Author: &object.Signature{
 			Name:  p.authorName,

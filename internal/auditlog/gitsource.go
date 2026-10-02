@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
@@ -172,24 +173,63 @@ func (g *GitSource) isFastForward(oldHash, newHash plumbing.Hash) (bool, error) 
 
 func (g *GitSource) readRoutingLocked() (RoutingConfig, error) {
 	full := filepath.Join(g.workdir, g.cfg.Path)
+	info, err := os.Stat(full)
+	if err != nil {
+		return RoutingConfig{}, fmt.Errorf("stat %s: %w", g.cfg.Path, err)
+	}
+	if info.IsDir() {
+		return g.readRoutingDirLocked(full)
+	}
+	return readRoutingFile(full, g.cfg.Path)
+}
+
+func (g *GitSource) readRoutingDirLocked(full string) (RoutingConfig, error) {
+	entries, err := os.ReadDir(full)
+	if err != nil {
+		return RoutingConfig{}, fmt.Errorf("read %s: %w", g.cfg.Path, err)
+	}
+	merged := RoutingConfig{Routing: make(map[string][]string)}
+	for _, entry := range entries {
+		if entry.IsDir() || (!isYAMLPath(entry.Name()) && !strings.HasSuffix(strings.ToLower(entry.Name()), ".json")) {
+			continue
+		}
+		cfg, err := readRoutingFile(filepath.Join(full, entry.Name()), filepath.Join(g.cfg.Path, entry.Name()))
+		if err != nil {
+			return RoutingConfig{}, err
+		}
+		for _, engine := range cfg.SecretEngines {
+			if !slices.Contains(merged.SecretEngines, engine) {
+				merged.SecretEngines = append(merged.SecretEngines, engine)
+			}
+			for _, target := range cfg.Routing[engine] {
+				if !slices.Contains(merged.Routing[engine], target) {
+					merged.Routing[engine] = append(merged.Routing[engine], target)
+				}
+			}
+		}
+	}
+	return merged, nil
+}
+
+func readRoutingFile(full, displayPath string) (RoutingConfig, error) {
 	f, err := os.Open(full)
 	if err != nil {
-		return RoutingConfig{}, fmt.Errorf("open %s: %w", g.cfg.Path, err)
+		return RoutingConfig{}, fmt.Errorf("open %s: %w", displayPath, err)
 	}
 	defer f.Close()
 	data, err := io.ReadAll(f)
 	if err != nil {
-		return RoutingConfig{}, fmt.Errorf("read %s: %w", g.cfg.Path, err)
+		return RoutingConfig{}, fmt.Errorf("read %s: %w", displayPath, err)
 	}
 
 	var cfg RoutingConfig
-	if isYAMLPath(g.cfg.Path) {
+	if isYAMLPath(displayPath) {
 		if err := yaml.Unmarshal(data, &cfg); err != nil {
-			return RoutingConfig{}, fmt.Errorf("parse %s: %w", g.cfg.Path, err)
+			return RoutingConfig{}, fmt.Errorf("parse %s: %w", displayPath, err)
 		}
 	} else {
 		if err := json.Unmarshal(data, &cfg); err != nil {
-			return RoutingConfig{}, fmt.Errorf("parse %s: %w", g.cfg.Path, err)
+			return RoutingConfig{}, fmt.Errorf("parse %s: %w", displayPath, err)
 		}
 	}
 	return cfg, nil
