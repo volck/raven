@@ -133,18 +133,34 @@ func ApplyDatafieldsTok8sSecret(dataFields *api.Secret, Annotations map[string]s
 			if strings.HasPrefix(valueStr, "base64:") {
 				stringSplit := strings.Split(valueStr, ":")
 				if helpers.IsBase64(stringSplit[1]) {
-					data[k], _ = base64.StdEncoding.DecodeString(stringSplit[1])
+					data[SanitizeSecretKey(k)], _ = base64.StdEncoding.DecodeString(stringSplit[1])
 				} else {
 					jsonLogger.Warn("key is not valid BASE64", "key", k)
 				}
 			} else if helpers.IsDocumentationKey(documentationKeys, k) {
 				Annotations[k] = valueStr
 			} else {
-				stringdata[k] = valueStr
+				stringdata[SanitizeSecretKey(k)] = valueStr
 			}
 		}
 	}
 	return data, stringdata
+}
+
+// SanitizeSecretKey replaces characters Kubernetes rejects in Secret data keys
+// ([-._a-zA-Z0-9]+) with '_'.
+func SanitizeSecretKey(key string) string {
+	sanitized := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+			return r
+		}
+		return '_'
+	}, key)
+	if sanitized != key {
+		jsonLogger.Warn("sanitized invalid secret data key", "key", key, "sanitized", sanitized)
+	}
+	return sanitized
 }
 
 func ApplyRavenLabels() map[string]string {
