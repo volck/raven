@@ -217,6 +217,10 @@ spec:
               value: "/mg/secret/ssc/tls.crt"
             - name: RAVEN_LOGLEVEL
               value: "INFO"
+            # Without this, Vault description fields become secret data keys
+            # and Kubernetes rejects the '/' in them.
+            - name: RAVEN_DOCUMENTATION_KEYS
+              value: "vault.norsk-tipping.no/description"
             # True on every existing raven. Without these a new one would
             # silently skip the rollout restart its RBAC is granted for.
             - name: RAVEN_KUBERNETESMONITOR
