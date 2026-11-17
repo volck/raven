@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	sealedSecretPkg "github.com/bitnami-labs/sealed-secrets/pkg/apis/sealed-secrets/v1alpha1"
+	sealedSecretPkg "github.com/bitnami-labs/sealed-secrets/pkg/apis/sealedsecrets/v1alpha1"
 	"github.com/hashicorp/vault/api"
 	k8sJson "k8s.io/apimachinery/pkg/runtime/serializer/json"
 )

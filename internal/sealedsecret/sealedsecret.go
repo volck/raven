@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"os"
 
-	sealedSecretPkg "github.com/bitnami-labs/sealed-secrets/pkg/apis/sealed-secrets/v1alpha1"
+	sealedSecretPkg "github.com/bitnami-labs/sealed-secrets/pkg/apis/sealedsecrets/v1alpha1"
 	"github.com/hashicorp/vault/api"
 	"github.com/volck/raven/internal/helpers"
 	vaultpkg "github.com/volck/raven/internal/vault"
