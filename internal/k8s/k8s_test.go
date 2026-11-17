@@ -348,3 +348,35 @@ func generateCustomMetadataSecret(t *testing.T, client *api.Client, cfg config.C
 
 	return secret
 }
+
+func TestApplyDatafieldsTok8sSecret_SanitizesDataKeys(t *testing.T) {
+	secret := &api.Secret{Data: map[string]interface{}{
+		"data": map[string]interface{}{
+			"vault.norsk-tipping.no/description": "desc",
+			"key with space":                     "base64:aGk=",
+			"raven/description":                  "doc",
+			"valid.KEY_name-1":                   "ok",
+		},
+	}}
+	annotations := map[string]string{}
+
+	data, stringdata := ApplyDatafieldsTok8sSecret(secret, annotations, "s", []string{"raven/description"})
+
+	if got := stringdata["vault.norsk-tipping.no_description"]; got != "desc" {
+		t.Errorf("stringdata[vault.norsk-tipping.no_description] = %q, want %q", got, "desc")
+	}
+	if got := string(data["key_with_space"]); got != "hi" {
+		t.Errorf("data[key_with_space] = %q, want %q", got, "hi")
+	}
+	if got := stringdata["valid.KEY_name-1"]; got != "ok" {
+		t.Errorf("stringdata[valid.KEY_name-1] = %q, want %q", got, "ok")
+	}
+	if got := annotations["raven/description"]; got != "doc" {
+		t.Errorf("documentation key should stay an unmodified annotation, got %q", got)
+	}
+	for k := range stringdata {
+		if strings.ContainsAny(k, "/ ") {
+			t.Errorf("invalid stringdata key %q", k)
+		}
+	}
+}
