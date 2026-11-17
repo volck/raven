@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	sealedSecretPkg "github.com/bitnami-labs/sealed-secrets/pkg/apis/sealed-secrets/v1alpha1"
+	sealedSecretPkg "github.com/bitnami-labs/sealed-secrets/pkg/apis/sealedsecrets/v1alpha1"
 	"github.com/go-git/go-git/v5"
 	"github.com/hashicorp/vault/api"
 )
